@@ -11,12 +11,12 @@ sudo curl -Lo /usr/local/bin/cloud https://raw.githubusercontent.com/chi-rb/chi-
 
 Make it executable:
 ```
-sudo chmod +x /usr/local/bin
+sudo chmod +x /usr/local/bin/cloud
 ```
 
 Modify $rails_path inside the script:
 ```
-sudo vi /usrl/local/bin/cloud
+sudo vi /usr/local/bin/cloud
 ```
 
 Run install:
