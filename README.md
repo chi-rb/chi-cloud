@@ -33,9 +33,9 @@ cloud help
 
 ## Credits
 
-It's sponsored by [Occam](https://www.occam.global)
+It's sponsored by:
 
-![Occam Logo](https://www.occam.global/wp-content/uploads/2018/01/Occam_V1_170px.png)
+[![Occam Logo](https://www.occam.global/wp-content/uploads/2018/01/Occam_V1_170px.png)](https://www.occam.global)
 
 ## License
 
