@@ -35,6 +35,8 @@ cloud help
 
 It's sponsored by [Occam](https://www.occam.global)
 
+![Occam Logo](https://www.occam.global/wp-content/uploads/2018/01/Occam_V1_170px.png)
+
 ## License
 
 It is free software, and may be redistributed under the terms specified in the LICENSE file.
