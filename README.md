@@ -33,7 +33,7 @@ cloud help
 
 ## Credits
 
-This gem it's sponsored by [Occam](https://www.occam.global)
+It's sponsored by [Occam](https://www.occam.global)
 
 ## License
 
