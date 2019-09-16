@@ -1,0 +1,284 @@
+#!/bin/sh
+
+# Uncomment it and add the absolute path to your rails path
+#rails_path=
+
+base_url=https://raw.githubusercontent.com/chi-rb/chi-cloud/master/conf
+tmp_path=/tmp
+conf_path=~/.cloud
+hosts_path=/etc/hosts
+exports_path=/etc/exports
+
+multipass_path=/usr/local/bin/multipass
+multipass_version=0.8.0
+multipass_pkg_url=https://github.com/CanonicalLtd/multipass/releases/download/v$multipass_version/multipass-$multipass_version%2Bmac-Darwin.pkg
+multipass_pkg_path=$tmp_path/multipass.pkg
+multipass_uninstall_path=/Library/Application\ Support/com.canonical.multipass/uninstall.sh
+
+vm_name=cluster
+vm_init_name=cloud-init.yml
+vm_init_path=$tmp_path/$vm_init_name
+vm_init_url=$base_url/$vm_init_name
+vm_agent_name=com.$vm_name.plist
+vm_agent_url=$base_url/$vm_agent_name
+vm_agent_path=~/Library/LaunchAgents/$vm_agent_name
+vm_agent_tmp_path=$tmp_path/$vm_agent_name
+
+title() {
+	if [ "$printed" = true ]; then
+		printf "\n"
+	fi
+	printf "# $*\n"
+	printed=true
+}
+
+begin() {
+	title $@
+	changed=true
+}
+
+ok() {
+	printf "Ok\n"
+}
+
+multipass_current_version() {
+	printf $(multipass version | head -n1 | awk '{ print $2 }' | sed 's/+.*//')
+}
+
+vm_exists() {
+	multipass info $vm_name > /dev/null 2>&1
+}
+
+host_exists() {
+	sudo grep $vm_name $hosts_path > /dev/null 2>&1
+}
+
+export_exists() {
+	test -f $exports_path && sudo grep $rails_path $exports_path > /dev/null 2>&1
+}
+
+finish() {
+	if [ "$changed" = true ]; then
+		printf "\nDone"
+	else
+		printf 'Nothing to do'
+	fi
+	printf "\n"
+}
+
+multipass_exec() {
+	multipass exec $vm_name -- sudo $@
+}
+
+kubectl() {
+	multipass_exec microk8s.kubectl $@
+}
+
+find_pod() {
+	printf $(kubectl get pod -l "name=$1" -o jsonpath='{.items[0].metadata.name}')
+}
+
+pod_exec() {
+	name=$1
+	shift
+	kubectl exec -it $(find_pod $name) -- $@
+}
+
+deploy_path() {
+	path=/rails/cloud/deploys
+	if [ ! -z $1 ]; then
+		path=$path/$1
+	fi
+	printf $path
+}
+
+build_path() {
+	path=/rails/cloud/builds
+	if [ ! -z $1 ]; then
+		path=$path/$1
+	fi
+	printf $path
+}
+
+case $1 in
+install)
+
+	if [ ! -f $multipass_path ] || [ $multipass_version != $(multipass_current_version) ]; then
+		begin Installing Multipass $multipass_version
+		if [ -f $multipass_path ] && [ ! -z "$(sudo pgrep multipass)" ]; then
+			printf "Multipass is running, close it and run the script again\n"
+			exit
+		fi
+		curl -Lo $multipass_pkg_path $multipass_pkg_url
+		sudo installer -pkg $multipass_pkg_path -target /
+		rm $multipass_pkg_path
+	fi
+
+	if ! vm_exists; then
+		begin Creating Cluster
+		curl -o $vm_init_path $vm_init_url
+		multipass launch -c 4 -m 2G -d 10G -n $vm_name --cloud-init $vm_init_path
+		rm $vm_init_path
+	fi
+
+	if ! host_exists; then
+		begin Adding Host Alias
+		vm_ip=$(multipass info $vm_name | grep IP | awk '{ print $2 }')
+		printf "$vm_ip $vm_name\n" | sudo tee -a $hosts_path > /dev/null
+		ok
+	fi
+
+	if ! export_exists; then
+		begin Adding Shared Folder
+		printf "$rails_path -mapall=$(id -u)" | sudo tee -a $exports_path > /dev/null
+		multipass_exec mount 192.168.64.1:$rails_path /rails
+		ok
+	fi
+
+	if [ ! -f $vm_agent_path ]; then
+		begin Installing Agent
+		curl -o $vm_agent_path $vm_agent_url
+		launchctl load -w $vm_agent_path
+	fi
+
+	finish
+
+;;
+uninstall)
+
+	if [ -f $vm_agent_path ]; then
+		begin Uninstalling Agent
+		launchctl unload -w $vm_agent_path
+		rm $vm_agent_path
+		ok
+	fi
+
+	if [ -f $multipass_path ]; then
+		begin Uninstalling Multipass
+		yes | sudo sh "$multipass_uninstall_path"
+	fi
+
+	if host_exists; then
+		begin Removing Host Alias
+		sudo sed -i '' "/$vm_name/d" $hosts_path
+		ok
+	fi
+
+	if export_exists; then
+		begin Removing Shared Folder
+		sudo sed -i '' "/$rails_path/d" $hosts_path
+		ok
+	fi
+
+	if [ -f $conf_path ]; then
+		begin Removing Configuration
+		rm -rf $config_path
+		ok
+	fi
+
+	finish
+
+;;
+reinstall)
+
+	cloud uninstall
+	cloud install
+
+;;
+start)
+
+	multipass start $vm_name
+
+;;
+stop)
+
+	multipass stop $vm_name
+
+;;
+build)
+
+	kubectl apply -Rf $(build_path $2)
+
+;;
+deploy)
+
+	kubectl apply -Rf $(deploy_path $2)
+
+;;
+undeploy)
+
+	kubectl delete -Rf $(deploy_path $2)
+
+;;
+clear)
+
+	kubectl delete --all pods
+
+;;
+restart)
+
+	cloud stop
+	cloud start
+
+;;
+status)
+
+	case $2 in
+	cluster)
+		multipass_exec sudo top
+	;;
+	'')
+		kubectl get pods
+	;;
+	*)
+		kubectl describe pod $2
+	;;
+	esac
+
+;;
+shell)
+
+	if [ "$2" = cluster ]; then
+		multipass shell $vm_name
+	else
+		pod_exec ${2:-rails} /bin/bash
+	fi
+
+;;
+console)
+
+	if [ -z $2 ] || [ "$2" = rails ]; then
+		pod_exec rails bin/rails c
+	fi
+
+;;
+logs)
+
+	kubectl logs -f $(find_pod ${2:-rails})
+
+;;
+*)
+
+	cat <<-EOF
+		Usage: cloud <commands>
+		Orchestrates rails+kubernetes clouds.
+
+		Available commands:
+		  install      Setups cloud
+		  uninstall    Unsetups cloud
+		  reinstall    Installs and uninstalls
+		  start        Boots cluster
+		  stop         Halts cluster
+		  restart      Stops and starts
+		  build        Builds docker images
+		  deploy       Applies one or all deploy yamls
+		  undeploy     Unapplies one or all deploy yamls
+		  clear        Deletes all pods
+		  shell        Attachs bash session in pod or cluster (rails pod by default)
+		  console      Attachs rails console
+		  status       Lists pods, describes pod or runs top in cluster (lists pods by default)
+		  logs         Tails pod logs (rails pod by default)
+	EOF
+
+;;
+esac
