@@ -184,6 +184,7 @@ remove)
 ;;
 install)
 
+  title Choose Settings
   configure
 
 	if [ ! -f $multipass_path ] || [ $multipass_version != $(multipass_current_version) ]; then
