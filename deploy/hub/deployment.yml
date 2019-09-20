@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hub
+  labels:
+    name: hub
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: hub
+  template:
+    metadata:
+      labels:
+        name: hub
+    spec:
+      containers:
+        - image: selenium/hub:3
+          name: hub

@@ -1,0 +1,47 @@
+apiVersion: apps/v2
+kind: Deployment
+metadata:
+  name: rails
+  labels:
+    name: rails
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      name: rails
+  template:
+    metadata:
+      labels:
+        name: rails
+    spec:
+      containers:
+        - image: {{ registry_url }}/rails:latest
+          name: rails
+          env:
+            - name: DB_PASS
+              value: {{ mysql_root_pass }}
+            - name: RAILS_MASTER_KEY
+              value: {{ rails_master_key }}
+            - name: RAILS_ENV
+              value: {{ rails_env }}
+            - name: DB_HOST
+              value: mysql
+            - name: RAILS_MAX_THREADS
+              value: {{ rails_max_thread }}
+            - name: RAILS_MIN_THREADS
+              value: {{ rails_min_threads }}
+            - name: RAILS_WORKERS
+              value: {{ rails_workers }}
+            - name: REDIS_URL
+              value: redis:6379
+          ports:
+            - containerPort: {{ rails_port }}
+          volumeMounts:
+            - mountPath: /rails
+              name: rails
+      volumes:
+        - name: rails
+          hostPath:
+            path: {{ rails_path }}

@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chrome
+  labels:
+    name: chrome
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: chrome
+  template:
+    metadata:
+      labels:
+        name: chrome
+    spec:
+      containers:
+        - image: selenium/node-chrome:3
+          name: chrome
+          env:
+            - name: HUB_HOST
+              value: hub

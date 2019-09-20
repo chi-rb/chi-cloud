@@ -1,0 +1,7 @@
+#!/bin/sh
+if [ "$RAILS_ENV" != production ]; then
+  bin/spring server >log/spring.log 2>&1 &
+fi
+rm -f tmp/pids/server.pid
+bin/rails db:setup
+bin/rails s

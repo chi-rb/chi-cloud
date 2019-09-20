@@ -1,6 +1,6 @@
 # Cloud
 
-Orchestrates kubernetes clouds.
+Orchestrates Kubernetes Clouds.
 
 ## Install
 

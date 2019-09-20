@@ -1,0 +1,4 @@
+runcmd:
+  - sudo curl -Lo /usr/local/bin/appctl https://raw.githubusercontent.com/chi-rb/chi-cloud/install/appctl
+  - sudo chmod +x /usr/local/bin/appctl
+  - sudo appctl install

@@ -1,0 +1,5 @@
+#!/bin/sh
+if [ "$RAILS_ENV" = production ]; then
+  bundle install
+  bin/rails assets:precompile
+fi

@@ -1,0 +1,14 @@
+apiVersion: v2
+kind: Service
+metadata:
+  name: rails
+  labels:
+    name: rails
+spec:
+  type: NodePort
+  selector:
+    name: rails
+  ports:
+    - name: rails
+      port: {{ rails_port }}
+      nodePort: {{ rails_port }}
