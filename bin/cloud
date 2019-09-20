@@ -43,21 +43,12 @@ title() {
 	if [ "$printed" = true ]; then
     echo
 	fi
-	echo "# $@"
+	echo "~> $@"
 	printed=true
 }
 
-begin() {
-	title $@
-	changed=true
-}
-
-ok() {
-	echo Ok
-}
-
 edit() {
-	echo -n 'Edit (y/N)?'
+  echo "Edit (y/N)? \c"
 	read yn
   if [ "$yn" != y ]; then
     return 1
@@ -87,7 +78,7 @@ configure() {
 setting() {
   echo $1: ${!2}
   if edit; then
-		echo -n Enter new value: 
+		echo "Enter new value: \c"
 		read $2
   fi
   echo
@@ -107,14 +98,6 @@ host_exists() {
 
 export_exists() {
 	test -f $exports_path && sudo grep '# Cloud' $exports_path > /dev/null 2>&1
-}
-
-finish() {
-	if [ "$changed" = true ]; then
-		echo "\nDone"
-	else
-		echo 'Nothing to do'
-	fi
 }
 
 multipass_exec() {
@@ -155,14 +138,6 @@ build_path() {
 	echo $path
 }
 
-unknown() {
-	cat <<-EOF
-		Unknown command
-
-		Try checking documentation with: cloud help
-	EOF
-}
-
 gen_id() {
   echo $(uuidgen | tr '[:upper:]' '[:lower:]' | sed 's/-//g')
 }
@@ -178,12 +153,12 @@ fi
 case $1 in
 add)
 
-  begin Generating Cloud Folder
+  title Generating Cloud Folder
   mkdir -p cloud/build cloud/deploy
   app_id=$(gen_id)
   echo app_id=$app_id >> cloud/settings
 
-  begin Sharing App Folder
+  title Sharing App Folder
   app_path=$(pwd)
   if ! export_exists; then
     echo '# Cloud' | sudo tee -a $exports_path
@@ -196,13 +171,13 @@ add)
 remove)
 
   if app_exists; then
-    begin Unsharing Application
+    title Unsharing Application
     multipass_exec umount /mnt/$app_id
     $app_path=$(pwd)
     sudo sed -i '' "/$app_path/d" $exports_path
     sudo nfsd restart
 
-    begin Removing Cloud Folder
+    title Removing Cloud Folder
     rm -rf cloud
   fi
 
@@ -212,7 +187,7 @@ install)
   configure
 
 	if [ ! -f $multipass_path ] || [ $multipass_version != $(multipass_current_version) ]; then
-		begin Installing Multipass $multipass_version
+		title Installing Multipass $multipass_version
 		if [ -f $multipass_path ] && [ ! -z "$(sudo pgrep multipass)" ]; then
 			echo Multipass is running, close it and run the script again
 			exit
@@ -223,56 +198,53 @@ install)
 	fi
 
 	if ! vm_exists; then
-		begin Creating Cluster
+		title Creating Cluster
 		curl -o $vm_init_path $vm_init_url
 		multipass launch -c $vm_cpus -m $vm_memory -d $vm_disk -n $vm_name --cloud-init $vm_init_path
 		rm $vm_init_path
+    multipass_exec appctl install
 	fi
 
 	if ! host_exists; then
-		begin Adding Hostname
+		title Adding Hostname
 		vm_ip=$(multipass info $vm_name | grep IP | awk '{ print $2 }')
 		echo $vm_ip $vm_name | sudo tee -a $hosts_path
 	fi
 
 	if [ ! -f $vm_agent_path ]; then
-		begin Installing Agent
+		title Installing Agent
 		curl -o $vm_agent_path $vm_agent_url
 		launchctl load -w $vm_agent_path
 	fi
-
-	finish
 
 ;;
 uninstall)
 
 	if [ -f $vm_agent_path ]; then
-		begin Uninstalling Agent
+		title Uninstalling Agent
 		launchctl unload -w $vm_agent_path
 		rm $vm_agent_path
 	fi
 
 	if [ -f $multipass_path ]; then
-		begin Uninstalling Multipass
+		title Uninstalling Multipass
 		yes | sudo sh "$multipass_uninstall_path"
 	fi
 
 	if host_exists; then
-		begin Removing Hostname
+		title Removing Hostname
 		sudo sed -i '' "/$vm_name/d" $hosts_path
 	fi
 
 	if export_exists; then
-		begin Removing Shared Folder
+		title Removing Shared Folder
     sudo sed -i '' '/# Cloud/,$ d' /etc/exports
 	fi
 
 	if [ -f $cloud_path ]; then
-		begin Removing Configuration
+		title Removing Configuration
 		rm -rf $cloud_path
 	fi
-
-	finish
 
 ;;
 reinstall)
@@ -349,7 +321,7 @@ status)
 
 	case $2 in
 	cluster)
-		multipass_exec sudo top
+		multipass_exec top
 	;;
 	'')
 		kubectl get pods
