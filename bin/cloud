@@ -27,61 +27,61 @@ vm_agent_path=~/Library/LaunchAgents/$vm_agent_name
 vm_agent_tmp_path=$tmp_path/$vm_agent_name
 
 setting_names=(
-  vm_memory
-  vm_cpus
-  vm_disk
-  multipass_version
+	vm_memory
+	vm_cpus
+	vm_disk
+	multipass_version
 )
 setting_descs=(
-  'Virtual machine memory'
-  'Virtual machine cpus'
-  'Virtual machine disk'
-  'Multipass version'
+	'Virtual machine memory'
+	'Virtual machine cpus'
+	'Virtual machine disk'
+	'Multipass version'
 )
 
 title() {
 	if [ "$printed" = true ]; then
-    echo
+		echo
 	fi
 	echo "~> $@"
 	printed=true
 }
 
 edit() {
-  echo "Edit (y/N)? \c"
+	echo "Edit (y/N)? \c"
 	read yn
-  if [ "$yn" != y ]; then
-    return 1
-  fi
+	if [ "$yn" != y ]; then
+		return 1
+	fi
 }
 
 configure() {
-  for i in ${!setting_names[@]}; do
-    echo ${setting_descs[$i]}: ${!setting_names[$i]}
-  done
-  echo
-  if edit; then
-    echo
-    for i in ${!setting_names[@]}; do
-      setting "${setting_descs[$i]}" ${setting_names[$i]}
-    done
-    mkdir -p $cloud_path
-    rm $settings_path
-    touch $settings_path
-    for i in ${!setting_names[@]}; do
-      echo ${setting_names[$i]}=${!setting_names[$i]} >> $settings_path
-    done
-    configure
-  fi
+	for i in ${!setting_names[@]}; do
+		echo ${setting_descs[$i]}: ${!setting_names[$i]}
+	done
+	echo
+	if edit; then
+		echo
+		for i in ${!setting_names[@]}; do
+			setting "${setting_descs[$i]}" ${setting_names[$i]}
+		done
+		mkdir -p $cloud_path
+		rm $settings_path
+		touch $settings_path
+		for i in ${!setting_names[@]}; do
+			echo ${setting_names[$i]}=${!setting_names[$i]} >> $settings_path
+		done
+		configure
+	fi
 }
 
 setting() {
-  echo $1: ${!2}
-  if edit; then
+	echo $1: ${!2}
+	if edit; then
 		echo "Enter new value: \c"
 		read $2
-  fi
-  echo
+	fi
+	echo
 }
 
 multipass_current_version() {
@@ -119,14 +119,14 @@ pod_exec() {
 }
 
 app_deploys_path() {
-  $app_mount_path/cloud/deploys
+	$app_mount_path/cloud/deploys
 }
 
 deploy_path() {
 	if [ ! -z $1 ]; then
 		echo $(app_deploys_path)/$1
-  else
-    echo $(app_deploys_path)
+	else
+		echo $(app_deploys_path)
 	fi
 }
 
@@ -139,53 +139,53 @@ build_path() {
 }
 
 gen_id() {
-  echo $(uuidgen | tr '[:upper:]' '[:lower:]' | sed 's/-//g')
+	echo $(uuidgen | tr '[:upper:]' '[:lower:]' | sed 's/-//g')
 }
 
-load() {
-  . ./cloud/settings
+load_app() {
+	. ./cloud/settings
 }
 
 if [ -f $settings_path ]; then
-  . $settings_path
+	. $settings_path
 fi
 
 case $1 in
 add)
 
-  title Generating Cloud Folder
-  mkdir -p cloud/build cloud/deploy
-  app_id=$(gen_id)
-  echo app_id=$app_id >> cloud/settings
+	title Generating Cloud Folder
+	mkdir -p cloud/build cloud/deploy
+	app_id=$(gen_id)
+	echo app_id=$app_id >> cloud/settings
 
-  title Sharing App Folder
-  app_path=$(pwd)
-  if ! export_exists; then
-    echo '# Cloud' | sudo tee -a $exports_path
-  fi
-  echo $app_path -mapall=$(id -u) | sudo tee -a $exports_path
-  sudo nfsd restart
-  multipass_exec appctl add $app_id $app_path
+	title Sharing App Folder
+	app_path=$(pwd)
+	if ! export_exists; then
+		echo '# Cloud' | sudo tee -a $exports_path
+	fi
+	echo $app_path -mapall=$(id -u) | sudo tee -a $exports_path
+	sudo nfsd restart
+	multipass_exec appctl add $app_id $app_path
 
 ;;
 remove)
 
-  if app_exists; then
-    title Unsharing Application
-    multipass_exec umount /mnt/$app_id
-    $app_path=$(pwd)
-    sudo sed -i '' "/$app_path/d" $exports_path
-    sudo nfsd restart
+	load_app
 
-    title Removing Cloud Folder
-    rm -rf cloud
-  fi
+	title Unsharing Application
+	multipass_exec umount /mnt/$app_id
+	$app_path=$(pwd)
+	sudo sed -i '' "/$app_path/d" $exports_path
+	sudo nfsd restart
+
+	title Removing Cloud Folder
+	rm -rf cloud
 
 ;;
 install)
 
-  title Choosing Settings
-  configure
+	title Choosing Settings
+	configure
 
 	if [ ! -f $multipass_path ] || [ $multipass_version != $(multipass_current_version) ]; then
 		title Installing Multipass $multipass_version
@@ -203,7 +203,7 @@ install)
 		curl -o $vm_init_path $vm_init_url
 		multipass launch -c $vm_cpus -m $vm_memory -d $vm_disk -n $vm_name --cloud-init $vm_init_path
 		rm $vm_init_path
-    multipass_exec appctl install
+		multipass_exec appctl install
 	fi
 
 	if ! host_exists; then
@@ -239,7 +239,7 @@ uninstall)
 
 	if export_exists; then
 		title Removing Shared Folder
-    sudo sed -i '' '/# Cloud/,$ d' /etc/exports
+		sudo sed -i '' '/# Cloud/,$ d' /etc/exports
 	fi
 
 	if [ -f $cloud_path ]; then
@@ -256,22 +256,22 @@ reinstall)
 ;;
 environment)
 
-  case $2 in
-  list)
-    ls -1 $environment_path/* | xargs basename
-  ;;
-  add)
-    mkdir -p $environment_path
-    touch $environment_path/$3
-    cloud environment edit $3
-  ;;
-  edit)
-    $EDITOR $environment_path/$3
-  ;;
-  delete)
-    rm -f $environment_path/$3
-  ;;
-  esac
+	case $2 in
+	list)
+		ls -1 $environment_path/* | xargs basename
+	;;
+	add)
+		mkdir -p $environment_path
+		touch $environment_path/$3
+		cloud environment edit $3
+	;;
+	edit)
+		$EDITOR $environment_path/$3
+	;;
+	delete)
+		rm -f $environment_path/$3
+	;;
+	esac
 
 ;;
 start)
@@ -286,30 +286,26 @@ stop)
 ;;
 build)
 
-  if app_exists; then
-    kubectl apply -Rf $(build_path $2)
-  fi
+	load_app
+	kubectl apply -Rf $(build_path $2)
 
 ;;
 deploy)
 
-  if app_exists; then
-    kubectl apply -Rf $(deploy_path $2)
-  fi
+	load_app
+	kubectl apply -Rf $(deploy_path $2)
 
 ;;
 undeploy)
 
-  if app_exists; then
-	  kubectl delete -Rf $(deploy_path $2)
-  fi
+	load_app
+	kubectl delete -Rf $(deploy_path $2)
 
 ;;
 clear)
 
-  if app_exists; then
-    kubectl delete --all pods
-  fi
+	load_app
+	kubectl delete --all pods
 
 ;;
 restart)
