@@ -5,18 +5,24 @@ tmp_path=/tmp
 hosts_path=/etc/hosts
 exports_path=/etc/exports
 cloud_path=~/.cloud
-settings_path=$cloud_path/settings
-environment_path=./cloud/environment
+conf_path=$cloud_path/conf
 
-multipass_path=/usr/local/bin/multipass
-multipass_version=0.8.0
-multipass_pkg_url=https://github.com/CanonicalLtd/multipass/releases/download/v$multipass_version/multipass-$multipass_version%2Bmac-Darwin.pkg
-multipass_pkg_path=$tmp_path/multipass.pkg
-multipass_uninstall_path=/Library/Application\ Support/com.canonical.multipass/uninstall.sh
+app_path=$(pwd)
+app_cloud_path=cloud
+app_conf_path=$app_cloud_path/conf
+app_envs_path=$app_cloud_path/envs
+app_build_path=$app_cloud_path/build
+app_deploy_path=$app_cloud_path/deploy
+
+mp_path=/usr/local/bin/multipass
+mp_ver=0.8.0
+mp_pkg_url=https://github.com/CanonicalLtd/multipass/releases/download/v$mp_ver/multipass-$mp_ver%2Bmac-Darwin.pkg
+mp_pkg_path=$tmp_path/multipass.pkg
+mp_uninstall_path=/Library/Application\ Support/com.canonical.multipass/uninstall.sh
 
 vm_name=cluster
-vm_memory=2G
-vm_cpus=4
+vm_mem=2G
+vm_cpus=2
 vm_disk=10G
 vm_init_name=cloud-init.yml
 vm_init_path=$tmp_path/$vm_init_name
@@ -26,65 +32,80 @@ vm_agent_url=$base_url/$vm_agent_name
 vm_agent_path=~/Library/LaunchAgents/$vm_agent_name
 vm_agent_tmp_path=$tmp_path/$vm_agent_name
 
-setting_names=(
-	vm_memory
+conf_names=(
+	vm_mem
 	vm_cpus
 	vm_disk
-	multipass_version
+	mp_ver
 )
-setting_descs=(
+conf_descs=(
 	'Virtual machine memory'
 	'Virtual machine cpus'
 	'Virtual machine disk'
 	'Multipass version'
 )
 
-title() {
-	if [ "$printed" = true ]; then
-		echo
+ok() {
+	if [ "$titled" = true ]; then
+		echo "Ok\n"
 	fi
-	echo "~> $@"
-	printed=true
 }
 
-edit() {
-	echo "Edit (y/N)? \c"
+complete() {
+	ok
+	echo $1 complete
+	if [ "$titled" != true ]; then
+		echo Nothing to do
+	fi
+}
+
+title() {
+	ok
+	echo "~> $@"
+	titled=true
+}
+
+correct() {
+	echo "Correct (Y/n)? \c"
 	read yn
-	if [ "$yn" != y ]; then
+	if [ "$yn" = n ]; then
 		return 1
 	fi
 }
 
 configure() {
-	for i in ${!setting_names[@]}; do
-		echo ${setting_descs[$i]}: ${!setting_names[$i]}
+	indexes=${!conf_names[@]}
+	for i in $indexes; do
+		desc=${conf_descs[$i]}
+		value=${!conf_names[$i]}
+		echo $desc: $value
 	done
-	echo
-	if edit; then
+	if ! correct; then
 		echo
-		for i in ${!setting_names[@]}; do
-			setting "${setting_descs[$i]}" ${setting_names[$i]}
+		for i in $indexes; do
+			desc=${conf_descs[$i]}
+			name=${conf_names[$i]}
+			value=${!conf_names[$i]}
+			echo $desc: $value
+			if ! correct; then
+				echo "Enter new value: \c"
+				read $name
+			fi
+			echo
 		done
 		mkdir -p $cloud_path
-		rm $settings_path
-		touch $settings_path
-		for i in ${!setting_names[@]}; do
-			echo ${setting_names[$i]}=${!setting_names[$i]} >> $settings_path
+		rm -f $conf_path
+		touch $conf_path
+		for i in $indexes; do
+			name=${conf_names[$i]}
+			value=${!conf_names[$i]}
+			echo $name=$value >> $conf_path
 		done
 		configure
 	fi
 }
 
-setting() {
-	echo $1: ${!2}
-	if edit; then
-		echo "Enter new value: \c"
-		read $2
-	fi
-	echo
-}
-
-multipass_current_version() {
+mp_current_ver() {
 	echo $(multipass version | head -n1 | awk '{ print $2 }' | sed 's/+.*//')
 }
 
@@ -100,12 +121,16 @@ export_exists() {
 	test -f $exports_path && sudo grep '# Cloud' $exports_path > /dev/null 2>&1
 }
 
-multipass_exec() {
+mp_exec() {
 	multipass exec $vm_name -- sudo $@
 }
 
 kubectl() {
-	multipass_exec microk8s.kubectl $@
+	mp_exec microk8s.kubectl $@
+}
+
+appctl() {
+	mp_exec appctl $@
 }
 
 find_pod() {
@@ -118,54 +143,107 @@ pod_exec() {
 	kubectl exec -it $(find_pod $name) -- $@
 }
 
-app_deploys_path() {
-	$app_mount_path/cloud/deploys
-}
-
-deploy_path() {
-	if [ ! -z $1 ]; then
-		echo $(app_deploys_path)/$1
-	else
-		echo $(app_deploys_path)
-	fi
-}
-
-build_path() {
-	path=/rails/cloud/builds
-	if [ ! -z $1 ]; then
-		path=$path/$1
-	fi
-	echo $path
-}
-
 gen_id() {
 	echo $(uuidgen | tr '[:upper:]' '[:lower:]' | sed 's/-//g')
 }
 
-load_app() {
-	. ./cloud/settings
+app_exists() {
+	test -d $app_cloud_path
 }
 
-if [ -f $settings_path ]; then
-	. $settings_path
+load_app() {
+	if app_exists; then
+		. $app_conf_path
+		app_env_name=${1:-development}
+		ensure_app_env $app_env_name
+		. $app_env_path
+		if [ $app_env_name = development ]; then
+			app_path=/mnt/$app_id
+			registry_url=localhost:32000
+		fi
+		app_env=$app_env_name
+	else
+		echo No cloud folder found
+		exit 1
+	fi
+}
+
+unknown() {
+	echo Unknown command
+}
+
+app_env_exists() {
+	if [ ! -z $1 ]; then
+		app_env_path=$app_envs_path/$1
+		if [ ! -f $app_env_path ]; then
+			return 1
+		fi
+	else
+		echo No environment specified
+		exit 1
+	fi
+}
+
+ensure_app_env() {
+	if ! app_env_exists $1; then
+		echo Environment $1 not exists
+		exit 1
+	fi
+}
+
+process_ymls() {
+	yml_paths=$(find cloud/$1 -type f -name '*.yml')
+	for yml_path in $yml_paths; do
+		processed_yml=$(cat $yml_path)
+		var_names=$(grep -o '{{ [a-z_]* }}' $yml_path | sed 's/[{} ]//g' | uniq)
+		for var_name in $var_names; do
+			if [ -z ${!var_name} ]; then
+				echo {{ $var_name }} undefined, processing $yml_path in $app_env_name
+				exit 1
+			fi
+			var_value=$(echo ${!var_name} | sed 's/\//\\\//g')
+			processed_yml=$(echo "$processed_yml" | sed "s/{{ $var_name }}/$var_value/g")
+		done
+		if [ -z "$output" ]; then
+			output=$processed_yml
+		else
+			output="$output\n---\n$processed_yml"
+		fi
+	done
+	echo "$output"
+}
+
+edit() {
+	if [ -z $EDITOR ]; then
+		echo Edit $1 to setup environment
+	else
+		$EDITOR $1
+	fi
+}
+
+if [ -f $conf_path ]; then
+	. $conf_path
 fi
 
 case $1 in
 add)
 
-	title Generating Cloud Folder
-	mkdir -p cloud/build cloud/deploy
-	app_id=$(gen_id)
-	echo app_id=$app_id >> cloud/settings
+	if ! app_exists; then
+		title Generating Cloud Folder
+		mkdir -p $app_build_path $app_deploy_path
+		app_id=$(gen_id)
+		echo app_id=$app_id >> $app_conf_path
 
-	title Sharing App Folder
-	app_path=$(pwd)
-	if ! export_exists; then
-		echo '# Cloud' | sudo tee -a $exports_path
+		title Sharing Application
+		if ! export_exists; then
+			echo '# Cloud' | sudo tee -a $exports_path
+		fi
+		echo $app_path -mapall=$(id -u) | sudo tee -a $exports_path
+		sudo nfsd restart
+		mp_exec appctl add $app_id $app_path
+	else
+		echo Already exists
 	fi
-	echo $app_path -mapall=$(id -u) | sudo tee -a $exports_path
-	sudo nfsd restart
-	multipass_exec appctl add $app_id $app_path
 
 ;;
 remove)
@@ -173,13 +251,12 @@ remove)
 	load_app
 
 	title Unsharing Application
-	multipass_exec umount /mnt/$app_id
-	$app_path=$(pwd)
-	sudo sed -i '' "/$app_path/d" $exports_path
+	mp_exec appctl remove $app_id
+	sudo sed -i '' "/$app_id/d" $exports_path
 	sudo nfsd restart
 
 	title Removing Cloud Folder
-	rm -rf cloud
+	rm -rf $app_cloud_path
 
 ;;
 install)
@@ -187,23 +264,23 @@ install)
 	title Choosing Settings
 	configure
 
-	if [ ! -f $multipass_path ] || [ $multipass_version != $(multipass_current_version) ]; then
-		title Installing Multipass $multipass_version
-		if [ -f $multipass_path ] && [ ! -z "$(sudo pgrep multipass)" ]; then
+	if [ ! -f $mp_path ] || [ $mp_ver != $(mp_current_ver) ]; then
+		title Installing Multipass $mp_ver
+		if [ -f $mp_path ] && [ ! -z "$(sudo pgrep mp)" ]; then
 			echo Multipass is running, close it and run the script again
 			exit
 		fi
-		curl -Lo $multipass_pkg_path $multipass_pkg_url
-		sudo installer -pkg $multipass_pkg_path -target /
-		rm $multipass_pkg_path
+		curl -Lo $mp_pkg_path $mp_pkg_url
+		sudo installer -pkg $mp_pkg_path -target /
+		rm $mp_pkg_path
 	fi
 
 	if ! vm_exists; then
 		title Creating Cluster
 		curl -o $vm_init_path $vm_init_url
-		multipass launch -c $vm_cpus -m $vm_memory -d $vm_disk -n $vm_name --cloud-init $vm_init_path
+		multipass launch -c $vm_cpus -m $vm_mem -d $vm_disk -n $vm_name --cloud-init $vm_init_path
 		rm $vm_init_path
-		multipass_exec appctl install
+		mp_exec appctl install
 	fi
 
 	if ! host_exists; then
@@ -218,6 +295,8 @@ install)
 		launchctl load -w $vm_agent_path
 	fi
 
+	complete Installation
+
 ;;
 uninstall)
 
@@ -227,9 +306,9 @@ uninstall)
 		rm $vm_agent_path
 	fi
 
-	if [ -f $multipass_path ]; then
+	if [ -f $mp_path ]; then
 		title Uninstalling Multipass
-		yes | sudo sh "$multipass_uninstall_path"
+		yes | sudo sh "$mp_uninstall_path"
 	fi
 
 	if host_exists; then
@@ -247,29 +326,47 @@ uninstall)
 		rm -rf $cloud_path
 	fi
 
+	complete Uninstallation
+
 ;;
 reinstall)
 
 	cloud uninstall
+	echo
 	cloud install
 
 ;;
-environment)
+envs)
 
+	load_app
 	case $2 in
-	list)
-		ls -1 $environment_path/* | xargs basename
+	'')
+		list=$(ls -1 $app_envs_path)
+		if [ -z "$list" ]; then
+			echo No environments found
+		else
+			echo "$list"
+		fi
 	;;
 	add)
-		mkdir -p $environment_path
-		touch $environment_path/$3
-		cloud environment edit $3
+		if env_exists $3; then
+			echo Environment $3 already exists
+		else
+			mkdir -p $app_envs_path
+			touch $app_env_path
+			cloud envs edit $3
+		fi
 	;;
 	edit)
-		$EDITOR $environment_path/$3
+		ensure_app_env $3
+		edit $app_env_path
 	;;
-	delete)
-		rm -f $environment_path/$3
+	remove)
+		ensure_app_env $3
+		rm -f $app_env_path
+	;;
+	*)
+		unknown
 	;;
 	esac
 
@@ -284,22 +381,29 @@ stop)
 	multipass stop $vm_name
 
 ;;
+restart)
+
+	cloud stop
+	echo
+	cloud start
+
+;;
 build)
 
 	load_app
-	kubectl apply -Rf $(build_path $2)
+	echo "$(process_ymls build)"
 
 ;;
 deploy)
 
 	load_app
-	kubectl apply -Rf $(deploy_path $2)
+	echo "$(process_ymls deploy)"
 
 ;;
 undeploy)
 
 	load_app
-	kubectl delete -Rf $(deploy_path $2)
+	echo "$(process_ymls deploy)"
 
 ;;
 clear)
@@ -308,17 +412,11 @@ clear)
 	kubectl delete --all pods
 
 ;;
-restart)
-
-	cloud stop
-	cloud start
-
-;;
 status)
 
 	case $2 in
 	cluster)
-		multipass_exec top
+		mp_exec top
 	;;
 	'')
 		kubectl get pods
@@ -361,7 +459,7 @@ help)
 		  install       Setups cloud
 		  uninstall     Unsetups cloud
 		  reinstall     Installs and uninstalls
-		  environment   Manages environments
+		  envs          Manages environments
 		  start         Boots cluster
 		  stop          Halts cluster
 		  restart       Stops and starts
@@ -374,6 +472,11 @@ help)
 		  status        Lists pods, describes pod or runs top in cluster (lists pods by default)
 		  logs          Tails pod logs (rails pod by default)
 	EOF
+
+;;
+*)
+
+	unknown
 
 ;;
 esac

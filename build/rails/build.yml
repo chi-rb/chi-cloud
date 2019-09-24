@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: rails-build-{{ rails_env }}
+  name: rails-build-{{ app_env }}
   labels:
-    name: rails-build-{{ rails_env }}
+    name: rails-build-{{ app_env }}
 spec:
   restartPolicy: Never
   containers:
@@ -13,7 +13,7 @@ spec:
         - --destination={{ registry_url }}/rails:latest
         - --context=/rails/cloud/build/rails
         - --dockerfile=/Dockerfile
-        - --build-arg=RAILS_ENV={{ rails_env }}
+        - --build-arg=RAILS_ENV={{ app_env }}
         - --cache
       env:
         - name: RAILS_ENV
@@ -24,4 +24,4 @@ spec:
   volumes:
     - name: rails
       hostPath:
-        path: {{ rails_path }}
+        path: {{ app_path }}
