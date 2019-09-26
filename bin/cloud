@@ -271,7 +271,7 @@ install)
 		begin Installing Multipass $mp_ver
 		if [ -f $mp_path ] && [ ! -z "$(sudo pgrep multipass)" ]; then
 			echo Multipass is running, close it and run the script again
-			exit
+			exit 1
 		fi
 		curl -Lo $mp_pkg_path $mp_pkg_url
 		sudo installer -pkg $mp_pkg_path -target /
