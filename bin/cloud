@@ -268,6 +268,7 @@ remove)
 install)
 
 	if [ ! -d $repo_path ]; then
+		begin Cloning Repository
 		git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
 		sudo mv $repo_tmp_path $repo_path
 		sudo ln -s $repo_cloud_path $cloud_path
@@ -289,25 +290,8 @@ install)
 
 	if ! vm_exists; then
 		begin Creating Cluster
-		multipass launch -c $vm_cpus -m $vm_mem -d $vm_disk -n $vm_name
-		map_ip=$(ifconfig bridge100 inet | grep inet | awk '{ print $2 }')
-		mp_exec <<-EXEC
-			apt-get install -y nfs-common
-			snap install microk8s --classic
-			cat <<-EOF >> /var/snap/microk8s/current/args/kube-apiserver
-
-			# Enable insecure connections
-			--insecure-bind-address=0.0.0.0
-			--insecure-port=8080
-			EOF
-			microk8s.status --wait-ready
-			microk8s.enable dns registry
-			cat <<-HOST >> /etc/hosts
-
-				# Host alias
-				$mac_ip mac
-			HOST
-		EXEC
+		multipass launch -c $vm_cpus -m $vm_mem -d $vm_disk -n $vm_name --cloud-init $repo_init_path
+		mp_exec cloud-install
 	fi
 
 	if ! host_exists; then
@@ -353,7 +337,7 @@ uninstall)
 		rm -rf $user_path
 	fi
 
-	begin Removing Files
+	begin Removing Repository
 	sudo rm -rf $repo_path $cloud_path
 
 	complete Uninstallation
@@ -480,7 +464,7 @@ logs)
 ;;
 help)
 
-	cat <<-DOC
+	cat <<-EOF
 		Usage: cloud <commands> [options]
 		Orchestrates Rails+Kubernetes Clouds.
 
@@ -501,7 +485,7 @@ help)
 		  console       Attachs rails console
 		  status        Lists pods, describes pod or runs top in cluster (lists pods by default)
 		  logs          Tails pod logs (rails pod by default)
-	DOC
+	EOF
 
 ;;
 *)
