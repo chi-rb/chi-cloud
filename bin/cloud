@@ -266,7 +266,7 @@ install)
 
 	if [ ! -f $mp_path ] || [ $mp_ver != $(mp_current_ver) ]; then
 		begin Installing Multipass $mp_ver
-		if [ -f $mp_path ] && [ ! -z "$(sudo pgrep mp)" ]; then
+		if [ -f $mp_path ] && [ ! -z "$(sudo pgrep multipass)" ]; then
 			echo Multipass is running, close it and run the script again
 			exit
 		fi
