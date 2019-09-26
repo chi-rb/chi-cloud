@@ -348,11 +348,12 @@ uninstall)
 		sudo sed -i '' '/# Cloud/,$ d' /etc/exports
 	fi
 
-	if [ -f $user_path ]; then
+	if [ -d $user_path ]; then
 		begin Removing Configuration
 		rm -rf $user_path
 	fi
 
+	begin Removing Files
 	sudo rm -rf $repo_path $cloud_path
 
 	complete Uninstallation
