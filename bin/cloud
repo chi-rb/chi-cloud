@@ -289,7 +289,7 @@ install)
 		begin Creating Cluster
 		multipass launch -c $vm_cpus -m $vm_mem -d $vm_disk -n $vm_name
 		map_ip=$(ifconfig bridge100 inet | grep inet | awk '{ print $2 }')
-		mp_exec <<-EOF
+		mp_exec <<-CMD
 			apt-get install -y nfs-common
 			snap install microk8s --classic
 			cat <<-EOF >> /var/snap/microk8s/current/args/kube-apiserver
@@ -300,12 +300,12 @@ install)
 			EOF
 			microk8s.status --wait-ready
 			microk8s.enable dns registry
-			cat <<-EOF >> /etc/hosts
+			cat <<-HOST CONF >> /etc/hosts
 
 				# Host alias
 				$mac_ip mac
-			EOF
-		EOF
+			HOST
+		CMD
 	fi
 
 	if ! host_exists; then
@@ -475,7 +475,7 @@ logs)
 ;;
 help)
 
-	cat <<-EOF
+	cat <<-DOC
 		Usage: cloud <commands> [options]
 		Orchestrates Rails+Kubernetes Clouds.
 
@@ -496,7 +496,7 @@ help)
 		  console       Attachs rails console
 		  status        Lists pods, describes pod or runs top in cluster (lists pods by default)
 		  logs          Tails pod logs (rails pod by default)
-	EOF
+	DOC
 
 ;;
 *)
