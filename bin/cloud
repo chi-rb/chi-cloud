@@ -267,7 +267,7 @@ remove)
 install)
 
 	if [ ! -d $repo_path ]; then
-		git clone git@github.com:chi-rb/chi-cloud.git $install_path
+		git clone git@github.com:chi-rb/chi-cloud.git $repo_path
 		sudo ln -s $repo_cloud_path $cloud_path
 	fi
 
