@@ -261,7 +261,7 @@ remove)
 ;;
 install)
 
-	begin Choosing Settings
+	begin Choosing Configuration
 	configure
 
 	if [ ! -f $mp_path ] || [ $mp_ver != $(mp_current_ver) ]; then
