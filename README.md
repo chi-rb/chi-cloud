@@ -1,6 +1,6 @@
 # Cloud
 
-Orchestrates Kubernetes Clouds.
+Orchestrates Rails+Kubernetes Clouds.
 
 ## Install
 
