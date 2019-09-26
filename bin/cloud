@@ -289,7 +289,7 @@ install)
 		begin Creating Cluster
 		multipass launch -c $vm_cpus -m $vm_mem -d $vm_disk -n $vm_name
 		map_ip=$(ifconfig bridge100 inet | grep inet | awk '{ print $2 }')
-		mp_exec <<-CMD
+		mp_exec <<-EXEC
 			apt-get install -y nfs-common
 			snap install microk8s --classic
 			cat <<-EOF >> /var/snap/microk8s/current/args/kube-apiserver
@@ -300,12 +300,12 @@ install)
 			EOF
 			microk8s.status --wait-ready
 			microk8s.enable dns registry
-			cat <<-HOST CONF >> /etc/hosts
+			cat <<-HOST >> /etc/hosts
 
 				# Host alias
 				$mac_ip mac
 			HOST
-		CMD
+		EXEC
 	fi
 
 	if ! host_exists; then
