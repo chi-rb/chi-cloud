@@ -13,7 +13,7 @@ repo_cloud_path=$repo_path/bin/cloud
 repo_skel_path=$repo_path/skel
 repo_install_path=$repo_path/install
 repo_init_path=$repo_install_path/cloud-init.yml
-repo_agent_path=$repo_agent_path/$agent_name
+repo_agent_path=$repo_install_path/$agent_name
 
 user_path=~/.cloud
 user_conf_path=$user_path/conf
@@ -98,12 +98,12 @@ configure() {
 			echo
 		done
 		mkdir -p $user_path
-		rm -f $conf_path
-		touch $conf_path
+		rm -f $user_conf_path
+		touch $user_conf_path
 		for i in $indexes; do
 			name=${conf_names[$i]}
 			value=${!conf_names[$i]}
-			echo $name=$value >> $conf_path
+			echo $name=$value >> $user_conf_path
 		done
 		configure
 	fi
@@ -200,6 +200,9 @@ ensure_app_env() {
 
 process_ymls() {
 	yml_paths=$(find cloud/$1 -type f -name '*.yml')
+	output_path=$tmp_path/cloud/$app_id
+	rm -rf $gen_path
+	mkdir -p $output_path
 	for yml_path in $yml_paths; do
 		processed_yml=$(cat $yml_path)
 		var_names=$(grep -o '{{ [a-z_]* }}' $yml_path | sed 's/[{} ]//g' | uniq)
@@ -211,13 +214,9 @@ process_ymls() {
 			var_value=$(echo ${!var_name} | sed 's/\//\\\//g')
 			processed_yml=$(echo "$processed_yml" | sed "s/{{ $var_name }}/$var_value/g")
 		done
-		if [ -z "$output" ]; then
-			output=$processed_yml
-		else
-			output="$output\n---\n$processed_yml"
-		fi
+		echo $processed_yml >> $output_path/$yml_path
 	done
-	echo "$output"
+	echo $output_path
 }
 
 edit() {
@@ -267,15 +266,15 @@ remove)
 ;;
 install)
 
+	begin Choosing Configuration
+	configure
+
 	if [ ! -d $repo_path ]; then
 		begin Cloning Repository
 		git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
 		sudo mv $repo_tmp_path $repo_path
 		sudo ln -s $repo_cloud_path $cloud_path
 	fi
-
-	begin Choosing Configuration
-	configure
 
 	if [ ! -f $mp_path ] || [ $mp_ver != $(mp_current_ver) ]; then
 		begin Installing Multipass $mp_ver
@@ -405,7 +404,7 @@ restart)
 build)
 
 	load_app
-	echo "$(process_ymls build)"
+	kubectl apply -Rf "$(process_ymls build)"
 
 ;;
 deploy)
