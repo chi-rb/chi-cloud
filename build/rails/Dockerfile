@@ -9,4 +9,4 @@ ENV BUNDLE_JOBS=3
 ENV BUNDLE_PATH=/rails/vendor/bundle/ruby/2.6.0
 
 RUN compile
-CMD run
+CMD start
