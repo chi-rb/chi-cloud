@@ -1,20 +1,30 @@
 #!/bin/sh
 
-base_url=https://raw.githubusercontent.com/chi-rb/chi-cloud/master/install
 tmp_path=/tmp
 hosts_path=/etc/hosts
 exports_path=/etc/exports
-cloud_path=~/.cloud
-conf_path=$cloud_path/conf
+bin_path=/usr/local/bin
+cloud_path=$bin_path/cloud
+agent_name=com.cloud.plist
 
-app_path=$(pwd)
-app_cloud_path=cloud
-app_conf_path=$app_cloud_path/conf
-app_envs_path=$app_cloud_path/envs
-app_build_path=$app_cloud_path/build
-app_deploy_path=$app_cloud_path/deploy
+repo_path=/usr/local/cloud
+repo_cloud_path=$repo_path/bin/cloud
+repo_skel_path=$repo_path/skel
+repo_install_path=$repo_path/install
+repo_init_path=$repo_install_path/cloud-init.yml
+repo_agent_path=$repo_agent_path/$agent_name
 
-mp_path=/usr/local/bin/multipass
+user_path=~/.cloud
+user_conf_path=$user_path/conf
+user_agent_path=~/Library/LaunchAgents/$agent_name
+
+app_path=./cloud
+app_conf_path=$app_path/conf
+app_envs_path=$app_path/envs
+app_build_path=$app_path/build
+app_deploy_path=$app_path/deploy
+
+mp_path=$bin_path/multipass
 mp_ver=0.8.0
 mp_pkg_url=https://github.com/CanonicalLtd/multipass/releases/download/v$mp_ver/multipass-$mp_ver%2Bmac-Darwin.pkg
 mp_pkg_path=$tmp_path/multipass.pkg
@@ -24,25 +34,18 @@ vm_name=cluster
 vm_mem=2G
 vm_cpus=2
 vm_disk=10G
-vm_init_name=cloud-init.yml
-vm_init_path=$tmp_path/$vm_init_name
-vm_init_url=$base_url/$vm_init_name
-vm_agent_name=com.$vm_name.plist
-vm_agent_url=$base_url/$vm_agent_name
-vm_agent_path=~/Library/LaunchAgents/$vm_agent_name
-vm_agent_tmp_path=$tmp_path/$vm_agent_name
 
 conf_names=(
+	mp_ver
 	vm_mem
 	vm_cpus
 	vm_disk
-	mp_ver
 )
 conf_descs=(
+	'Multipass version'
 	'Virtual machine memory'
 	'Virtual machine cpus'
 	'Virtual machine disk'
-	'Multipass version'
 )
 
 ok() {
@@ -93,7 +96,7 @@ configure() {
 			fi
 			echo
 		done
-		mkdir -p $cloud_path
+		mkdir -p $user_path
 		rm -f $conf_path
 		touch $conf_path
 		for i in $indexes; do
@@ -158,7 +161,7 @@ load_app() {
 	ensure_app_env $app_env_name
 	. $app_env_path
 	if [ $app_env_name = development ]; then
-		app_path=/mnt/$app_id
+		app_mount_path=/mnt/$app_id
 		registry_url=localhost:32000
 	fi
 	app_env=$app_env_name
@@ -224,8 +227,8 @@ edit() {
 	fi
 }
 
-if [ -f $conf_path ]; then
-	. $conf_path
+if [ -f $user_conf_path ]; then
+	. $user_conf_path
 fi
 
 case $1 in
@@ -233,7 +236,7 @@ add)
 
 	if ! app_exists; then
 		begin Generating Cloud Folder
-		mkdir -p $app_build_path $app_deploy_path
+		cp -r $repo_skel_path $app_path
 		app_id=$(gen_id)
 		echo app_id=$app_id >> $app_conf_path
 
@@ -241,9 +244,9 @@ add)
 		if ! export_exists; then
 			echo '# Cloud' | sudo tee -a $exports_path
 		fi
-		echo $app_path -mapall=$(id -u) | sudo tee -a $exports_path
+		app_share_path=$(pwd)
+		echo $app_share_path -mapall=$(id -u) | sudo tee -a $exports_path
 		sudo nfsd restart
-		mp_exec appctl add $app_id $app_path
 	else
 		echo Already exists
 	fi
@@ -254,7 +257,6 @@ remove)
 	load_app
 
 	begin Unsharing Application
-	mp_exec appctl remove $app_id
 	sudo sed -i '' "/$app_id/d" $exports_path
 	sudo nfsd restart
 
@@ -263,6 +265,11 @@ remove)
 
 ;;
 install)
+
+	if [ ! -d $repo_path ]; then
+		git clone git@github.com:chi-rb/chi-cloud.git $install_path
+		ln -s $repo_cloud_path $cloud_path
+	fi
 
 	begin Choosing Configuration
 	configure
@@ -280,10 +287,25 @@ install)
 
 	if ! vm_exists; then
 		begin Creating Cluster
-		curl -o $vm_init_path $vm_init_url
-		multipass launch -c $vm_cpus -m $vm_mem -d $vm_disk -n $vm_name --cloud-init $vm_init_path
-		rm $vm_init_path
-		mp_exec appctl install
+		multipass launch -c $vm_cpus -m $vm_mem -d $vm_disk -n $vm_name
+		map_ip=$(ifconfig bridge100 inet | grep inet | awk '{ print $2 }')
+		mp_exec <<-EOF
+			apt-get install -y nfs-common
+			snap install microk8s --classic
+			cat <<-EOF >> /var/snap/microk8s/current/args/kube-apiserver
+
+			# Enable insecure connections
+			--insecure-bind-address=0.0.0.0
+			--insecure-port=8080
+			EOF
+			microk8s.status --wait-ready
+			microk8s.enable dns registry
+			cat <<-EOF >> /etc/hosts
+
+				# Host alias
+				$mac_ip mac
+			EOF
+		EOF
 	fi
 
 	if ! host_exists; then
@@ -294,8 +316,8 @@ install)
 
 	if [ ! -f $vm_agent_path ]; then
 		begin Installing Agent
-		curl -o $vm_agent_path $vm_agent_url
-		launchctl load -w $vm_agent_path
+		ln -s $repo_agent_path $user_agent_path
+		launchctl load -w $user_agent_path
 	fi
 
 	complete Installation
@@ -324,9 +346,9 @@ uninstall)
 		sudo sed -i '' '/# Cloud/,$ d' /etc/exports
 	fi
 
-	if [ -f $cloud_path ]; then
+	if [ -f $user_path ]; then
 		begin Removing Configuration
-		rm -rf $cloud_path
+		rm -rf $user_path
 	fi
 
 	complete Uninstallation

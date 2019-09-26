@@ -4,29 +4,14 @@ Orchestrates Rails+Kubernetes Clouds.
 
 ## Install
 
-Download the script:
+Copy and paste this:
 ```
-sudo curl -Lo /usr/local/bin/cloud https://raw.githubusercontent.com/chi-rb/chi-cloud/bin/cloud
-```
-
-Make it executable:
-```
-sudo chmod +x /usr/local/bin/cloud
-```
-
-Modify $rails_path inside the script:
-```
-sudo vi /usr/local/bin/cloud
-```
-
-Run install:
-```
-cloud install
+curl https://raw.githubusercontent.com/chi-rb/chi-cloud/master/bin/cloud | sudo sh -s install
 ```
 
 ## Usage
 
-To print manual use:
+Print manual using:
 ```
 cloud help
 ```
