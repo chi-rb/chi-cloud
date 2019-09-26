@@ -316,7 +316,7 @@ install)
 		echo $vm_ip $vm_name | sudo tee -a $hosts_path
 	fi
 
-	if [ ! -f $vm_agent_path ]; then
+	if [ ! -f $user_agent_path ]; then
 		begin Installing Agent
 		ln -s $repo_agent_path $user_agent_path
 		launchctl load -w $user_agent_path
@@ -327,10 +327,10 @@ install)
 ;;
 uninstall)
 
-	if [ -f $vm_agent_path ]; then
+	if [ -f $user_agent_path ]; then
 		begin Uninstalling Agent
-		launchctl unload -w $vm_agent_path
-		rm $vm_agent_path
+		launchctl unload -w $user_agent_path
+		rm $user_agent_path
 	fi
 
 	if [ -f $mp_path ]; then
@@ -352,6 +352,8 @@ uninstall)
 		begin Removing Configuration
 		rm -rf $user_path
 	fi
+
+	sudo rm -rf $repo_path $cloud_path
 
 	complete Uninstallation
 
