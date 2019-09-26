@@ -25,11 +25,11 @@ spec:
             - name: RAILS_MASTER_KEY
               value: {{ rails_master_key }}
             - name: RAILS_ENV
-              value: {{ rails_env }}
+              value: {{ app_env }}
             - name: DB_HOST
               value: mysql
             - name: RAILS_MAX_THREADS
-              value: {{ rails_max_thread }}
+              value: {{ rails_max_threads }}
             - name: RAILS_MIN_THREADS
               value: {{ rails_min_threads }}
             - name: RAILS_WORKERS
@@ -44,4 +44,4 @@ spec:
       volumes:
         - name: rails
           hostPath:
-            path: {{ rails_path }}
+            path: {{ app_path }}
