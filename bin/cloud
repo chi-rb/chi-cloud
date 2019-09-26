@@ -46,7 +46,7 @@ conf_descs=(
 )
 
 ok() {
-	if [ "$titled" = true ]; then
+	if [ "$beginned" = true ]; then
 		echo "Ok\n"
 	fi
 }
@@ -54,15 +54,15 @@ ok() {
 complete() {
 	ok
 	echo $1 complete
-	if [ "$titled" != true ]; then
+	if [ "$beginned" != true ]; then
 		echo Nothing to do
 	fi
 }
 
-title() {
+begin() {
 	ok
 	echo "~> $@"
-	titled=true
+	beginned=true
 }
 
 correct() {
@@ -229,12 +229,12 @@ case $1 in
 add)
 
 	if ! app_exists; then
-		title Generating Cloud Folder
+		begin Generating Cloud Folder
 		mkdir -p $app_build_path $app_deploy_path
 		app_id=$(gen_id)
 		echo app_id=$app_id >> $app_conf_path
 
-		title Sharing Application
+		begin Sharing Application
 		if ! export_exists; then
 			echo '# Cloud' | sudo tee -a $exports_path
 		fi
@@ -250,22 +250,22 @@ remove)
 
 	load_app
 
-	title Unsharing Application
+	begin Unsharing Application
 	mp_exec appctl remove $app_id
 	sudo sed -i '' "/$app_id/d" $exports_path
 	sudo nfsd restart
 
-	title Removing Cloud Folder
+	begin Removing Cloud Folder
 	rm -rf $app_cloud_path
 
 ;;
 install)
 
-	title Choosing Settings
+	begin Choosing Settings
 	configure
 
 	if [ ! -f $mp_path ] || [ $mp_ver != $(mp_current_ver) ]; then
-		title Installing Multipass $mp_ver
+		begin Installing Multipass $mp_ver
 		if [ -f $mp_path ] && [ ! -z "$(sudo pgrep mp)" ]; then
 			echo Multipass is running, close it and run the script again
 			exit
@@ -276,7 +276,7 @@ install)
 	fi
 
 	if ! vm_exists; then
-		title Creating Cluster
+		begin Creating Cluster
 		curl -o $vm_init_path $vm_init_url
 		multipass launch -c $vm_cpus -m $vm_mem -d $vm_disk -n $vm_name --cloud-init $vm_init_path
 		rm $vm_init_path
@@ -284,13 +284,13 @@ install)
 	fi
 
 	if ! host_exists; then
-		title Adding Hostname
+		begin Adding Hostname
 		vm_ip=$(multipass info $vm_name | grep IP | awk '{ print $2 }')
 		echo $vm_ip $vm_name | sudo tee -a $hosts_path
 	fi
 
 	if [ ! -f $vm_agent_path ]; then
-		title Installing Agent
+		begin Installing Agent
 		curl -o $vm_agent_path $vm_agent_url
 		launchctl load -w $vm_agent_path
 	fi
@@ -301,28 +301,28 @@ install)
 uninstall)
 
 	if [ -f $vm_agent_path ]; then
-		title Uninstalling Agent
+		begin Uninstalling Agent
 		launchctl unload -w $vm_agent_path
 		rm $vm_agent_path
 	fi
 
 	if [ -f $mp_path ]; then
-		title Uninstalling Multipass
+		begin Uninstalling Multipass
 		yes | sudo sh "$mp_uninstall_path"
 	fi
 
 	if host_exists; then
-		title Removing Hostname
+		begin Removing Hostname
 		sudo sed -i '' "/$vm_name/d" $hosts_path
 	fi
 
 	if export_exists; then
-		title Removing Shared Folder
+		begin Removing Shared Folder
 		sudo sed -i '' '/# Cloud/,$ d' /etc/exports
 	fi
 
 	if [ -f $cloud_path ]; then
-		title Removing Configuration
+		begin Removing Configuration
 		rm -rf $cloud_path
 	fi
 
