@@ -1,0 +1,40 @@
+#!/bin/sh
+
+prefix_path() {
+	echo "/mnt/$1"
+}
+
+case $1 in
+install)
+
+	chown root:root /usr/local/bin/cloud
+	chmod +x /usr/local/bin/cloud
+	apt-get install -y nfs-common
+	snap install microk8s --classic
+	cat <<-EOF >> /var/snap/microk8s/current/args/kube-apiserver
+
+	# Enable insecure connections
+	--insecure-bind-address=0.0.0.0
+	--insecure-port=8080
+	EOF
+	microk8s.status --wait-ready
+	microk8s.enable dns registry
+
+;;
+add)
+
+	mount_path=$(prefix_path $2)
+	echo "$3:$4\t$mount_path\tnfs defaults\t0 0\n" >> /etc/fstab
+	mkdir -p $mount_path
+	mount $mount_path
+
+;;
+remove)
+
+	mount_path=$(prefix_path $2)
+	umount $mount_path
+	sed -i '' "/$2/d" /etc/fstab
+	rmdir $mount_path
+
+;;
+esac

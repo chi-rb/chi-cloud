@@ -9,11 +9,12 @@ agent_name=com.cloud.plist
 
 repo_path=/usr/local/cloud
 repo_tmp_path=/tmp/chi-cloud
-repo_cloud_path=$repo_path/bin/cloud
-repo_skel_path=$repo_path/skel
-repo_install_path=$repo_path/install
-repo_init_path=$repo_install_path/cloud-init.yml
-repo_agent_path=$repo_install_path/$agent_name
+repo_app_path=$repo_path/app
+repo_mac_path=$repo_path/mac
+repo_mac_cloud_path=$repo_mac_path/cloud
+repo_mac_agent_path=$repo_mac_path/$agent_name
+repo_cluster_path=$repo_path/cluster
+repo_cluster_cloud_path=$repo_cluster_path/cloud
 
 user_path=~/.cloud
 user_conf_path=$user_path/conf
@@ -31,22 +32,24 @@ mp_pkg_url=https://github.com/CanonicalLtd/multipass/releases/download/v$mp_ver/
 mp_pkg_path=$tmp_path/multipass.pkg
 mp_uninstall_path=/Library/Application\ Support/com.canonical.multipass/uninstall.sh
 
-vm_name=cluster
-vm_mem=2G
-vm_cpus=2
-vm_disk=10G
+cluster_name=cluster
+cluster_mem=2G
+cluster_cpus=2
+cluster_disk=10G
 
 conf_names=(
 	mp_ver
-	vm_mem
-	vm_cpus
-	vm_disk
+	cluster_name
+	cluster_mem
+	cluster_cpus
+	cluster_disk
 )
 conf_descs=(
 	'Multipass version'
-	'Virtual machine memory'
-	'Virtual machine cpus'
-	'Virtual machine disk'
+	'Cluster name'
+	'Cluster machine memory'
+	'Cluster machine cpus'
+	'Cluster machine disk'
 )
 
 ok() {
@@ -113,12 +116,12 @@ mp_current_ver() {
 	echo $(multipass version | head -n1 | awk '{ print $2 }' | sed 's/+.*//')
 }
 
-vm_exists() {
-	multipass info $vm_name > /dev/null 2>&1
+cluster_exists() {
+	multipass info $cluster_name > /dev/null 2>&1
 }
 
 host_exists() {
-	sudo grep $vm_name $hosts_path > /dev/null 2>&1
+	sudo grep $cluster_name $hosts_path > /dev/null 2>&1
 }
 
 export_exists() {
@@ -126,11 +129,11 @@ export_exists() {
 }
 
 mp_exec() {
-	multipass exec $vm_name -- sudo $@
+	multipass exec $cluster_name -- sudo $@
 }
 
 kubectl() {
-	mp_exec microk8s.kubectl $@
+	echo mp_exec microk8s.kubectl $@
 }
 
 appctl() {
@@ -152,14 +155,13 @@ gen_id() {
 }
 
 app_exists() {
-	test -d $app_cloud_path
+	test -d $app_path
 }
 
 load_app() {
-	ensure_app
-	. $app_conf_path
 	app_env_name=${1:-development}
 	ensure_app_env $app_env_name
+	. $app_conf_path
 	. $app_env_path
 	if [ $app_env_name = development ]; then
 		app_mount_path=/mnt/$app_id
@@ -192,6 +194,7 @@ app_env_exists() {
 }
 
 ensure_app_env() {
+	ensure_app
 	if ! app_env_exists $1; then
 		echo Environment $1 not exists
 		exit 1
@@ -200,11 +203,13 @@ ensure_app_env() {
 
 process_ymls() {
 	yml_paths=$(find cloud/$1 -type f -name '*.yml')
-	output_path=$tmp_path/cloud/$app_id
-	rm -rf $gen_path
-	mkdir -p $output_path
+	app_tmp_path=$tmp_path/cloud/$app_id
+	rm -rf $app_tmp_path
+	mkdir -p $app_tmp_path
 	for yml_path in $yml_paths; do
-		processed_yml=$(cat $yml_path)
+		yml_tmp_path=$app_tmp_path/$yml_path
+		mkdir -p $(dirname $yml_tmp_path)
+		content=$(cat $yml_path)
 		var_names=$(grep -o '{{ [a-z_]* }}' $yml_path | sed 's/[{} ]//g' | uniq)
 		for var_name in $var_names; do
 			if [ -z ${!var_name} ]; then
@@ -212,11 +217,11 @@ process_ymls() {
 				exit 1
 			fi
 			var_value=$(echo ${!var_name} | sed 's/\//\\\//g')
-			processed_yml=$(echo "$processed_yml" | sed "s/{{ $var_name }}/$var_value/g")
+			content=$(echo "$content" | sed "s/{{ $var_name }}/$var_value/g")
 		done
-		echo $processed_yml >> $output_path/$yml_path
+		echo "$content" >> $yml_tmp_path
 	done
-	echo $output_path
+	echo $app_tmp_path
 }
 
 edit() {
@@ -232,38 +237,6 @@ if [ -f $user_conf_path ]; then
 fi
 
 case $1 in
-add)
-
-	if ! app_exists; then
-		begin Generating Cloud Folder
-		cp -r $repo_skel_path $app_path
-		app_id=$(gen_id)
-		echo app_id=$app_id >> $app_conf_path
-
-		begin Sharing Application
-		if ! export_exists; then
-			echo '# Cloud' | sudo tee -a $exports_path
-		fi
-		app_share_path=$(pwd)
-		echo $app_share_path -mapall=$(id -u) | sudo tee -a $exports_path
-		sudo nfsd restart
-	else
-		echo Already exists
-	fi
-
-;;
-remove)
-
-	load_app
-
-	begin Unsharing Application
-	sudo sed -i '' "/$app_id/d" $exports_path
-	sudo nfsd restart
-
-	begin Removing Cloud Folder
-	rm -rf $app_cloud_path
-
-;;
 install)
 
 	begin Choosing Configuration
@@ -273,7 +246,7 @@ install)
 		begin Cloning Repository
 		git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
 		sudo mv $repo_tmp_path $repo_path
-		sudo ln -s $repo_cloud_path $cloud_path
+		sudo ln -s $repo_mac_cloud_path $cloud_path
 	fi
 
 	if [ ! -f $mp_path ] || [ $mp_ver != $(mp_current_ver) ]; then
@@ -287,21 +260,22 @@ install)
 		rm $mp_pkg_path
 	fi
 
-	if ! vm_exists; then
+	if ! cluster_exists; then
 		begin Creating Cluster
-		multipass launch -c $vm_cpus -m $vm_mem -d $vm_disk -n $vm_name --cloud-init $repo_init_path
-		mp_exec cloud-install
+		multipass launch -c $cluster_cpus -m $cluster_mem -d $cluster_disk -n $cluster_name
+		multipass transfer $repo_cluster_cloud_path $cluster_name:$cloud_path
+		mp_exec cloud install
 	fi
 
 	if ! host_exists; then
 		begin Adding Hostname
-		vm_ip=$(multipass info $vm_name | grep IP | awk '{ print $2 }')
-		echo $vm_ip $vm_name | sudo tee -a $hosts_path
+		cluster_ip=$(multipass info $cluster_name | grep IP | awk '{ print $2 }')
+		echo $cluster_ip $cluster_name | sudo tee -a $hosts_path
 	fi
 
 	if [ ! -f $user_agent_path ]; then
 		begin Installing Agent
-		ln -s $repo_agent_path $user_agent_path
+		ln -s $repo_mac_agent_path $user_agent_path
 		launchctl load -w $user_agent_path
 	fi
 
@@ -323,7 +297,7 @@ uninstall)
 
 	if host_exists; then
 		begin Removing Hostname
-		sudo sed -i '' "/$vm_name/d" $hosts_path
+		sudo sed -i '' "/$cluster_name/d" $hosts_path
 	fi
 
 	if export_exists; then
@@ -349,116 +323,232 @@ reinstall)
 	cloud install
 
 ;;
-envs)
+cluster)
 
-	ensure_app
 	case $2 in
-	'')
-		list=$(ls -1 $app_envs_path)
-		if [ -z "$list" ]; then
-			echo No environments found
-		else
-			echo "$list"
-		fi
+	start)
+
+		multipass start $cluster_name
+
 	;;
+	stop)
+		multipass stop $cluster_name
+
+	;;
+	restart)
+
+		cloud stop
+		echo
+		cloud start
+
+	;;
+	clear)
+
+		load_app
+		kubectl delete --all pods
+
+	;;
+	shell)
+
+		multipass shell $cluster_name
+
+	;;
+	status)
+
+		mp_exec top
+
+	;;
+	help)
+
+		cat <<-EOF
+			Usage: cloud cluster <commands> [options]
+			Manages cluster.
+
+			Available commands:
+			  start         Boots cluster
+			  stop          Halts cluster
+			  restart       Stops and starts
+			  clear         Deletes all pods
+			  shell         Attachs bash session
+			  status        Attachs top session
+			  help          Prints documentation
+		EOF
+
+	;;
+	*)
+
+		unknown
+
+	;;
+	esac
+
+;;
+app)
+
+	case $2 in
 	add)
-		if app_env_exists $3; then
-			echo Environment $3 already exists
+
+		if ! app_exists; then
+			begin Generating Cloud Folder
+			cp -r $repo_app_path $app_path
+			app_id=$(gen_id)
+			echo app_id=$app_id >> $app_conf_path
+
+			begin Sharing Application
+			if ! export_exists; then
+				echo '# Cloud' | sudo tee -a $exports_path
+			fi
+			app_share_path=$(pwd)
+			echo $app_share_path -mapall=$(id -u) | sudo tee -a $exports_path
+			sudo nfsd restart
 		else
-			mkdir -p $app_envs_path
-			touch $app_env_path
-			cloud envs edit $3
+			echo Already exists
 		fi
-	;;
-	edit)
-		ensure_app_env $3
-		edit $app_env_path
+
 	;;
 	remove)
-		ensure_app_env $3
-		rm -f $app_env_path
+
+		load_app
+
+		begin Unsharing Application
+		sudo sed -i '' "/$app_id/d" $exports_path
+		sudo nfsd restart
+
+		begin Removing Cloud Folder
+		rm -rf $app_path
+
 	;;
-	*)
-		unknown
+	envs)
+
+		case $3 in
+		''|list)
+
+			ensure_app
+			list=$(ls -1 $app_envs_path)
+			if [ -z "$list" ]; then
+				echo No environments found
+			else
+				echo "$list"
+			fi
+
+		;;
+		add)
+
+			ensure_app
+			if app_env_exists $4; then
+				echo Environment $4 already exists
+			else
+				mkdir -p $app_envs_path
+				touch $app_env_path
+				cloud envs edit $4
+			fi
+
+		;;
+		edit)
+
+			ensure_app_env $4
+			edit $app_env_path
+
+		;;
+		remove)
+
+			ensure_app_env $4
+			rm -f $app_env_path
+
+		;;
+		help)
+
+			cat <<-EOF
+				Usage: cloud app envs <commands> [options]
+				Manages app envs.
+
+				Available commands:
+				  list          Lists envs
+				  add           Adds env
+				  edit          Edits env
+				  remove        Removes env
+				  help          Prints documentation
+			EOF
+
+		;;
+		*)
+
+			unknown
+
+		;;
+		esac
+
 	;;
-	esac
+	build)
 
-;;
-start)
+		load_app
+		kubectl apply -Rf $(process_ymls build)
 
-	multipass start $vm_name
-
-;;
-stop)
-
-	multipass stop $vm_name
-
-;;
-restart)
-
-	cloud stop
-	echo
-	cloud start
-
-;;
-build)
-
-	load_app
-	kubectl apply -Rf "$(process_ymls build)"
-
-;;
-deploy)
-
-	load_app
-	echo "$(process_ymls deploy)"
-
-;;
-undeploy)
-
-	load_app
-	echo "$(process_ymls deploy)"
-
-;;
-clear)
-
-	load_app
-	kubectl delete --all pods
-
-;;
-status)
-
-	case $2 in
-	cluster)
-		mp_exec top
 	;;
-	'')
-		kubectl get pods
+	deploy)
+
+		load_app
+		echo "$(process_ymls deploy)"
+
 	;;
-	*)
-		kubectl describe pod $2
+	undeploy)
+
+		load_app
+		echo "$(process_ymls deploy)"
+
 	;;
-	esac
+	console)
 
-;;
-shell)
-
-	if [ "$2" = cluster ]; then
-		multipass shell $vm_name
-	else
-		pod_exec ${2:-rails} /bin/bash
-	fi
-
-;;
-console)
-
-	if [ -z $2 ] || [ "$2" = rails ]; then
 		pod_exec rails bin/rails c
-	fi
 
-;;
-logs)
+	;;
+	shell)
 
-	kubectl logs -f $(find_pod ${2:-rails})
+		pod_exec ${3:-rails} /bin/bash
+
+	;;
+	status)
+
+		case $3 in
+		'')
+			kubectl get pods
+		;;
+		*)
+			kubectl describe pod $3
+		;;
+		esac
+
+	;;
+	logs)
+
+		kubectl logs -f $(find_pod ${3:-rails})
+
+	;;
+	help)
+
+		cat <<-EOF
+			Usage: cloud app <commands> [options]
+			Manages app.
+
+			Available commands:
+			  envs          Manages environments
+			  build         Builds docker images
+			  deploy        Applies one or all deploy ymls
+			  undeploy      Unapplies one or all deploy ymls
+			  console       Attachs rails console
+			  shell         Attachs bash session in pod (rails pod by default)
+			  status        Lists or describes pods (lists pods by default)
+			  logs          Tails pod logs (rails pod by default)
+			  help          Prints documentation
+		EOF
+
+	;;
+	*)
+
+		unknown
+
+	;;
+	esac
 
 ;;
 help)
@@ -468,22 +558,12 @@ help)
 		Orchestrates Rails+Kubernetes Clouds.
 
 		Available commands:
-		  help          Prints documentation
 		  install       Setups cloud
 		  uninstall     Unsetups cloud
 		  reinstall     Installs and uninstalls
-		  envs          Manages environments
-		  start         Boots cluster
-		  stop          Halts cluster
-		  restart       Stops and starts
-		  build         Builds docker images
-		  deploy        Applies one or all deploy yamls
-		  undeploy      Unapplies one or all deploy yamls
-		  clear         Deletes all pods
-		  shell         Attachs bash session in pod or cluster (rails pod by default)
-		  console       Attachs rails console
-		  status        Lists pods, describes pod or runs top in cluster (lists pods by default)
-		  logs          Tails pod logs (rails pod by default)
+		  cluster       Manages cluster
+		  app           Manages app
+		  help          Prints documentation
 	EOF
 
 ;;

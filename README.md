@@ -6,7 +6,7 @@ Orchestrates Rails+Kubernetes Clouds.
 
 Copy and paste this:
 ```
-sh <(curl -s https://raw.githubusercontent.com/chi-rb/chi-cloud/master/bin/cloud) install
+sh <(curl -s https://raw.githubusercontent.com/chi-rb/chi-cloud/master/mac/cloud) install
 ```
 
 ## Usage
