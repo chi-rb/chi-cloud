@@ -7,8 +7,9 @@ prefix_path() {
 case $1 in
 install)
 
-	chown root:root /usr/local/bin/cloud
-	chmod +x /usr/local/bin/cloud
+	chown root:root $0
+	chmod +x $0
+	mv $0 /usr/local/bin/cloud
 	apt-get install -y nfs-common
 	snap install microk8s --classic
 	cat <<-EOF >> /var/snap/microk8s/current/args/kube-apiserver
@@ -21,20 +22,26 @@ install)
 	microk8s.enable dns registry
 
 ;;
-add)
+app)
 
-	mount_path=$(prefix_path $2)
-	echo "$3:$4\t$mount_path\tnfs defaults\t0 0\n" >> /etc/fstab
-	mkdir -p $mount_path
-	mount $mount_path
+	case $2 in
+	add)
 
-;;
-remove)
+		mount_path=$(prefix_path $3)
+		echo "$4:$5\t$mount_path\tnfs defaults\t0 0" >> /etc/fstab
+		mkdir -p $mount_path
+		mount $mount_path
 
-	mount_path=$(prefix_path $2)
-	umount $mount_path
-	sed -i '' "/$2/d" /etc/fstab
-	rmdir $mount_path
+	;;
+	remove)
+
+		mount_path=$(prefix_path $3)
+		umount $mount_path
+		sed -i '' "/$3/d" /etc/fstab
+		rmdir $mount_path
+
+	;;
+	esac
 
 ;;
 esac

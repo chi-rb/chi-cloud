@@ -1,4 +1,4 @@
-apiVersion: apps/v2
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: rails
@@ -17,23 +17,23 @@ spec:
         name: rails
     spec:
       containers:
-        - image: {{ registry_url }}/rails:latest
+        - image: localhost:32000/rails:latest
           name: rails
           env:
             - name: DB_PASS
-              value: {{ mysql_root_pass }}
+              value: '{{ mysql_root_pass }}'
             - name: RAILS_MASTER_KEY
-              value: {{ rails_master_key }}
+              value: '{{ rails_master_key }}'
             - name: RAILS_ENV
               value: {{ app_env }}
             - name: DB_HOST
               value: mysql
             - name: RAILS_MAX_THREADS
-              value: {{ rails_max_threads }}
+              value: '{{ rails_max_threads }}'
             - name: RAILS_MIN_THREADS
-              value: {{ rails_min_threads }}
+              value: '{{ rails_min_threads }}'
             - name: RAILS_WORKERS
-              value: {{ rails_workers }}
+              value: '{{ rails_workers }}'
             - name: REDIS_URL
               value: redis:6379
           ports:
@@ -44,4 +44,4 @@ spec:
       volumes:
         - name: rails
           hostPath:
-            path: {{ app_path }}
+            path: {{ app_mount_path }}

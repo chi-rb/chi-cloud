@@ -21,7 +21,7 @@ spec:
           image: mysql:5.7
           env:
             - name: MYSQL_ROOT_PASSWORD
-              value: {{ mysql_root_pass }}
+              value: '{{ mysql_root_pass }}'
           volumeMounts:
             - mountPath: /var/lib/mysql
               name: mysql

@@ -20,7 +20,8 @@ user_path=~/.cloud
 user_conf_path=$user_path/conf
 user_agent_path=~/Library/LaunchAgents/$agent_name
 
-app_path=./cloud
+app_path=cloud
+app_tmp_path=$app_path/tmp
 app_conf_path=$app_path/conf
 app_envs_path=$app_path/envs
 app_build_path=$app_path/build
@@ -54,13 +55,15 @@ conf_descs=(
 
 ok() {
 	if [ "$beginned" = true ]; then
-		echo "Ok\n"
+		echo "Ok"
 	fi
 }
 
 complete() {
 	ok
-	echo $1 complete
+	if [ ! -z $1 ]; then
+		echo $1 complete
+	fi
 	if [ "$beginned" != true ]; then
 		echo Nothing to do
 	fi
@@ -68,6 +71,9 @@ complete() {
 
 begin() {
 	ok
+	if [ "$beginned" = true ]; then
+		echo
+	fi
 	echo "~> $@"
 	beginned=true
 }
@@ -133,7 +139,7 @@ mp_exec() {
 }
 
 kubectl() {
-	echo mp_exec microk8s.kubectl $@
+	mp_exec microk8s.kubectl --namespace $app_id $@
 }
 
 appctl() {
@@ -154,6 +160,14 @@ gen_id() {
 	echo $(uuidgen | tr '[:upper:]' '[:lower:]' | sed 's/-//g')
 }
 
+cluster_ip() {
+	echo $(multipass info $cluster_name | grep IP | awk '{ print $2 }')
+}
+
+mac_ip() {
+	echo $(cluster_ip) | sed 's/[0-9]*$/1/'
+}
+
 app_exists() {
 	test -d $app_path
 }
@@ -165,7 +179,7 @@ load_app() {
 	. $app_env_path
 	if [ $app_env_name = development ]; then
 		app_mount_path=/mnt/$app_id
-		registry_url=localhost:32000
+		registry_url=$(cluster_ip):32000
 	fi
 	app_env=$app_env_name
 }
@@ -203,11 +217,10 @@ ensure_app_env() {
 
 process_ymls() {
 	yml_paths=$(find cloud/$1 -type f -name '*.yml')
-	app_tmp_path=$tmp_path/cloud/$app_id
-	rm -rf $app_tmp_path
 	mkdir -p $app_tmp_path
+	rm -rf $app_tmp_path/*
 	for yml_path in $yml_paths; do
-		yml_tmp_path=$app_tmp_path/$yml_path
+		yml_tmp_path=$app_tmp_path/${yml_path#$app_path}
 		mkdir -p $(dirname $yml_tmp_path)
 		content=$(cat $yml_path)
 		var_names=$(grep -o '{{ [a-z_]* }}' $yml_path | sed 's/[{} ]//g' | uniq)
@@ -221,7 +234,7 @@ process_ymls() {
 		done
 		echo "$content" >> $yml_tmp_path
 	done
-	echo $app_tmp_path
+	echo /mnt/$app_id/$app_tmp_path
 }
 
 edit() {
@@ -263,14 +276,13 @@ install)
 	if ! cluster_exists; then
 		begin Creating Cluster
 		multipass launch -c $cluster_cpus -m $cluster_mem -d $cluster_disk -n $cluster_name
-		multipass transfer $repo_cluster_cloud_path $cluster_name:$cloud_path
-		mp_exec cloud install
+		multipass transfer $repo_cluster_cloud_path $cluster_name:$cluster_tmp_cloud_path
+		mp_exec sh cloud install
 	fi
 
 	if ! host_exists; then
 		begin Adding Hostname
-		cluster_ip=$(multipass info $cluster_name | grep IP | awk '{ print $2 }')
-		echo $cluster_ip $cluster_name | sudo tee -a $hosts_path
+		echo $(cluster_ip) $cluster_name | sudo tee -a $hosts_path
 	fi
 
 	if [ ! -f $user_agent_path ]; then
@@ -401,6 +413,12 @@ app)
 			app_share_path=$(pwd)
 			echo $app_share_path -mapall=$(id -u) | sudo tee -a $exports_path
 			sudo nfsd restart
+			mp_exec cloud app add $app_id $(mac_ip) $app_share_path
+
+			begin Assigning Namespace
+			kubectl create namespace $app_id
+
+			complete
 		else
 			echo Already exists
 		fi
@@ -410,12 +428,18 @@ app)
 
 		load_app
 
+		begin Removing Namespace
+		kubectl delete namespace $app_id
+
 		begin Unsharing Application
+		mp_exec cloud app remove $app_id
 		sudo sed -i '' "/$app_id/d" $exports_path
 		sudo nfsd restart
 
 		begin Removing Cloud Folder
 		rm -rf $app_path
+
+		complete
 
 	;;
 	envs)
@@ -488,7 +512,7 @@ app)
 	deploy)
 
 		load_app
-		echo "$(process_ymls deploy)"
+		kubectl apply -Rf "$(process_ymls deploy)"
 
 	;;
 	undeploy)
@@ -499,16 +523,19 @@ app)
 	;;
 	console)
 
+		load_app
 		pod_exec rails bin/rails c
 
 	;;
 	shell)
 
+		load_app
 		pod_exec ${3:-rails} /bin/bash
 
 	;;
 	status)
 
+		load_app
 		case $3 in
 		'')
 			kubectl get pods
@@ -519,8 +546,9 @@ app)
 		esac
 
 	;;
-	logs)
+	log)
 
+		load_app
 		kubectl logs -f $(find_pod ${3:-rails})
 
 	;;
@@ -538,7 +566,7 @@ app)
 			  console       Attachs rails console
 			  shell         Attachs bash session in pod (rails pod by default)
 			  status        Lists or describes pods (lists pods by default)
-			  logs          Tails pod logs (rails pod by default)
+			  log           Tails pod logs (rails pod by default)
 			  help          Prints documentation
 		EOF
 

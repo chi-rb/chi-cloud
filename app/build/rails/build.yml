@@ -24,4 +24,4 @@ spec:
   volumes:
     - name: rails
       hostPath:
-        path: {{ app_path }}
+        path: {{ app_mount_path }}
