@@ -133,11 +133,13 @@ export_exists() {
 }
 
 mp_exec() {
-	multipass exec $cluster_name -- $@
+	script_path=/tmp/$(gen_id)
+	multipass transfer $script_path cluster:$script_path
+	multipass exec $cluster_name -- sudo sh $script_path
 }
 
 kubectl() {
-	mp_exec sudo microk8s.kubectl --namespace $app_id $@
+	mp_exec microk8s.kubectl --namespace $app_id $@
 }
 
 find_pod() {
@@ -275,16 +277,16 @@ install)
 
 		begin Installing Kubernetes
 		mp_exec <<-SSH
-			sudo apt-get install -y nfs-common
-			sudo snap install microk8s --classic
-			cat <<-CONF | sudo tee -a /var/snap/microk8s/current/args/kube-apiserver
+			apt-get install -y nfs-common
+			snap install microk8s --classic
+			cat <<-CONF >> /var/snap/microk8s/current/args/kube-apiserver
 
 			# Enable insecure connections
 			--insecure-bind-address=0.0.0.0
 			--insecure-port=8080
 			CONF
-			sudo microk8s.status --wait-ready
-			sudo microk8s.enable dns registry
+			microk8s.status --wait-ready
+			microk8s.enable dns registry
 		SSH
 	fi
 
@@ -381,7 +383,7 @@ cluster)
 	;;
 	status)
 
-		mp_exec sudo top
+		mp_exec top
 
 	;;
 	help)
@@ -428,9 +430,9 @@ app)
 			echo $app_share_path -mapall=$(id -u) | sudo tee -a $exports_path
 			sudo nfsd restart
 			mp_exec <<-SSH
-				echo "$(mac_ip):$app_share_path\t$app_mount_path\tnfs defaults\t0 0" | sudo tee -a /etc/fstab
-				sudo mkdir -p $app_mount_path
-				sudo mount $app_mount_path
+				echo "$(mac_ip):$app_share_path\t$app_mount_path\tnfs defaults\t0 0" >> /etc/fstab
+				mkdir -p $app_mount_path
+				mount $app_mount_path
 			SSH
 
 			begin Assigning Namespace
@@ -451,9 +453,9 @@ app)
 
 		begin Unsharing Application
 		mp_exec <<-SSH
-			sudo umount $app_mount_path
-			sudo sed -i '/$app_id/d' /etc/fstab
-			sudo rmdir $app_mount_path
+			umount $app_mount_path
+			sed -i '/$app_id/d' /etc/fstab
+			rmdir $app_mount_path
 		SSH
 		sudo sed -i '' "/$app_id/d" $exports_path
 		sudo nfsd restart
