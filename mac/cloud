@@ -26,7 +26,7 @@ app_build_path=$app_cloud_path/build
 app_deploy_path=$app_cloud_path/deploy
 
 mp_path=$bin_path/multipass
-mp_ver=0.8.1
+mp_ver=0.8.0
 mp_pkg_url=https://github.com/CanonicalLtd/multipass/releases/download/v$mp_ver/multipass-$mp_ver%2Bmac-Darwin.pkg
 mp_pkg_path=$tmp_path/multipass.pkg
 mp_uninstall_path=/Library/Application\ Support/com.canonical.multipass/uninstall.sh
