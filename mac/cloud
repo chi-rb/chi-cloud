@@ -11,21 +11,19 @@ repo_path=/usr/local/cloud
 repo_tmp_path=/tmp/chi-cloud
 repo_app_path=$repo_path/app
 repo_mac_path=$repo_path/mac
-repo_mac_cloud_path=$repo_mac_path/cloud
-repo_mac_agent_path=$repo_mac_path/$agent_name
-repo_cluster_path=$repo_path/cluster
-repo_cluster_cloud_path=$repo_cluster_path/cloud
+repo_cloud_path=$repo_mac_path/cloud
+repo_agent_path=$repo_mac_path/$agent_name
 
-user_path=~/.cloud
-user_conf_path=$user_path/conf
+user_cloud_path=~/.cloud
+user_conf_path=$use_cloud_path/conf
 user_agent_path=~/Library/LaunchAgents/$agent_name
 
-app_path=cloud
-app_tmp_path=$app_path/tmp
-app_conf_path=$app_path/conf
-app_envs_path=$app_path/envs
-app_build_path=$app_path/build
-app_deploy_path=$app_path/deploy
+app_cloud_path=cloud
+app_tmp_path=$app_cloud_path/tmp
+app_conf_path=$app_cloud_path/conf
+app_envs_path=$app_cloud_path/envs
+app_build_path=$app_cloud_path/build
+app_deploy_path=$app_cloud_path/deploy
 
 mp_path=$bin_path/multipass
 mp_ver=0.8.0
@@ -106,7 +104,7 @@ configure() {
 			fi
 			echo
 		done
-		mkdir -p $user_path
+		mkdir -p $user_cloud_path
 		rm -f $user_conf_path
 		touch $user_conf_path
 		for i in $indexes; do
@@ -169,7 +167,7 @@ mac_ip() {
 }
 
 app_exists() {
-	test -d $app_path
+	test -d $app_cloud_path
 }
 
 load_app() {
@@ -177,10 +175,12 @@ load_app() {
 	ensure_app_env $app_env_name
 	. $app_conf_path
 	. $app_env_path
+	app_mount_path=/mnt/$app_id
+	app_share_path=$(pwd)
 	if [ $app_env_name = development ]; then
-		app_mount_path=/mnt/$app_id
 		registry_url=$(cluster_ip):32000
 	fi
+	app_path=$app_mount_path
 	app_env=$app_env_name
 }
 
@@ -220,7 +220,7 @@ process_ymls() {
 	mkdir -p $app_tmp_path
 	rm -rf $app_tmp_path/*
 	for yml_path in $yml_paths; do
-		yml_tmp_path=$app_tmp_path/${yml_path#$app_path}
+		yml_tmp_path=$app_tmp_path/${yml_path#$app_cloud_path}
 		mkdir -p $(dirname $yml_tmp_path)
 		content=$(cat $yml_path)
 		var_names=$(grep -o '{{ [a-z_]* }}' $yml_path | sed 's/[{} ]//g' | uniq)
@@ -259,7 +259,7 @@ install)
 		begin Cloning Repository
 		git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
 		sudo mv $repo_tmp_path $repo_path
-		sudo ln -s $repo_mac_cloud_path $cloud_path
+		sudo ln -s $repo_cloud_path $cloud_path
 	fi
 
 	if [ ! -f $mp_path ] || [ $mp_ver != $(mp_current_ver) ]; then
@@ -276,8 +276,18 @@ install)
 	if ! cluster_exists; then
 		begin Creating Cluster
 		multipass launch -c $cluster_cpus -m $cluster_mem -d $cluster_disk -n $cluster_name
-		multipass transfer $repo_cluster_cloud_path $cluster_name:$cluster_tmp_cloud_path
-		mp_exec sh cloud install
+		mp_exec <<-SSH
+			apt-get install -y nfs-common
+			snap install microk8s --classic
+			cat <<-CONF >> /var/snap/microk8s/current/args/kube-apiserver
+
+			# Enable insecure connections
+			--insecure-bind-address=0.0.0.0
+			--insecure-port=8080
+			CONF
+			microk8s.status --wait-ready
+			microk8s.enable dns registry
+		SSH
 	fi
 
 	if ! host_exists; then
@@ -287,7 +297,7 @@ install)
 
 	if [ ! -f $user_agent_path ]; then
 		begin Installing Agent
-		ln -s $repo_mac_agent_path $user_agent_path
+		ln -s $repo_agent_path $user_agent_path
 		launchctl load -w $user_agent_path
 	fi
 
@@ -317,9 +327,9 @@ uninstall)
 		sudo sed -i '' '/# Cloud/,$ d' /etc/exports
 	fi
 
-	if [ -d $user_path ]; then
+	if [ -d $user_cloud_path ]; then
 		begin Removing Configuration
-		rm -rf $user_path
+		rm -rf $user_cloud_path
 	fi
 
 	begin Removing Repository
@@ -333,6 +343,12 @@ reinstall)
 	cloud uninstall
 	echo
 	cloud install
+
+;;
+update)
+
+	begin Updating Repository
+	git -C $repo_path pull
 
 ;;
 cluster)
@@ -372,7 +388,7 @@ cluster)
 	;;
 	help)
 
-		cat <<-EOF
+		cat <<-DOC
 			Usage: cloud cluster <commands> [options]
 			Manages cluster.
 
@@ -384,7 +400,7 @@ cluster)
 			  shell         Attachs bash session
 			  status        Attachs top session
 			  help          Prints documentation
-		EOF
+		DOC
 
 	;;
 	*)
@@ -398,22 +414,26 @@ cluster)
 app)
 
 	case $2 in
-	add)
+	init)
 
 		if ! app_exists; then
 			begin Generating Cloud Folder
-			cp -r $repo_app_path $app_path
+			cp -r $repo_app_path $app_cloud_path
 			app_id=$(gen_id)
 			echo app_id=$app_id >> $app_conf_path
+			load_app
 
 			begin Sharing Application
 			if ! export_exists; then
 				echo '# Cloud' | sudo tee -a $exports_path
 			fi
-			app_share_path=$(pwd)
 			echo $app_share_path -mapall=$(id -u) | sudo tee -a $exports_path
 			sudo nfsd restart
-			mp_exec cloud app add $app_id $(mac_ip) $app_share_path
+			mp_exec <<-SSH
+				echo "$(mac_ip):$app_share_path\t$app_mount_path\tnfs defaults\t0 0" >> /etc/fstab
+				mkdir -p $app_mount_path
+				mount $app_mount_path
+			SSH
 
 			begin Assigning Namespace
 			kubectl create namespace $app_id
@@ -432,12 +452,16 @@ app)
 		kubectl delete namespace $app_id
 
 		begin Unsharing Application
-		mp_exec cloud app remove $app_id
+		mp_exec <<-SSH
+			umount $app_mount_path
+			sed -i '/$app_id/d' /etc/fstab
+			rmdir $app_mount_path
+		SSH
 		sudo sed -i '' "/$app_id/d" $exports_path
 		sudo nfsd restart
 
 		begin Removing Cloud Folder
-		rm -rf $app_path
+		rm -rf $app_cloud_path
 
 		complete
 
@@ -482,7 +506,7 @@ app)
 		;;
 		help)
 
-			cat <<-EOF
+			cat <<-DOC
 				Usage: cloud app envs <commands> [options]
 				Manages app envs.
 
@@ -492,7 +516,7 @@ app)
 				  edit          Edits env
 				  remove        Removes env
 				  help          Prints documentation
-			EOF
+			DOC
 
 		;;
 		*)
@@ -554,7 +578,7 @@ app)
 	;;
 	help)
 
-		cat <<-EOF
+		cat <<-DOC
 			Usage: cloud app <commands> [options]
 			Manages app.
 
@@ -568,7 +592,7 @@ app)
 			  status        Lists or describes pods (lists pods by default)
 			  log           Tails pod logs (rails pod by default)
 			  help          Prints documentation
-		EOF
+		DOC
 
 	;;
 	*)
@@ -581,7 +605,7 @@ app)
 ;;
 help)
 
-	cat <<-EOF
+	cat <<-DOC
 		Usage: cloud <commands> [options]
 		Orchestrates Rails+Kubernetes Clouds.
 
@@ -592,7 +616,7 @@ help)
 		  cluster       Manages cluster
 		  app           Manages app
 		  help          Prints documentation
-	EOF
+	DOC
 
 ;;
 *)
