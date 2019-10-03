@@ -136,6 +136,7 @@ mp_exec() {
 	script_path=/tmp/$(gen_id)
 	echo "$@\nrm \$0" >> $script_path
 	multipass transfer $script_path cluster:$script_path
+	rm $script_path
 	multipass exec $cluster_name -- sudo sh $script_path
 }
 
