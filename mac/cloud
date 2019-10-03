@@ -26,7 +26,7 @@ app_build_path=$app_cloud_path/build
 app_deploy_path=$app_cloud_path/deploy
 
 mp_path=$bin_path/multipass
-mp_ver=0.8.0
+mp_ver=0.8.1
 mp_pkg_url=https://github.com/CanonicalLtd/multipass/releases/download/v$mp_ver/multipass-$mp_ver%2Bmac-Darwin.pkg
 mp_pkg_path=$tmp_path/multipass.pkg
 mp_uninstall_path=/Library/Application\ Support/com.canonical.multipass/uninstall.sh
@@ -133,15 +133,11 @@ export_exists() {
 }
 
 mp_exec() {
-	multipass exec $cluster_name -- sudo $@
+	multipass exec $cluster_name -- $@
 }
 
 kubectl() {
-	mp_exec microk8s.kubectl --namespace $app_id $@
-}
-
-appctl() {
-	mp_exec appctl $@
+	mp_exec sudo microk8s.kubectl --namespace $app_id $@
 }
 
 find_pod() {
@@ -276,17 +272,19 @@ install)
 	if ! cluster_exists; then
 		begin Creating Cluster
 		multipass launch -c $cluster_cpus -m $cluster_mem -d $cluster_disk -n $cluster_name
+
+		begin Installing Kubernetes
 		mp_exec <<-SSH
-			apt-get install -y nfs-common
-			snap install microk8s --classic
-			cat <<-CONF >> /var/snap/microk8s/current/args/kube-apiserver
+			sudo apt-get install -y nfs-common
+			sudo snap install microk8s --classic
+			cat <<-CONF | sudo tee -a /var/snap/microk8s/current/args/kube-apiserver
 
 			# Enable insecure connections
 			--insecure-bind-address=0.0.0.0
 			--insecure-port=8080
 			CONF
-			microk8s.status --wait-ready
-			microk8s.enable dns registry
+			sudo microk8s.status --wait-ready
+			sudo microk8s.enable dns registry
 		SSH
 	fi
 
@@ -383,7 +381,7 @@ cluster)
 	;;
 	status)
 
-		mp_exec top
+		mp_exec sudo top
 
 	;;
 	help)
@@ -430,9 +428,9 @@ app)
 			echo $app_share_path -mapall=$(id -u) | sudo tee -a $exports_path
 			sudo nfsd restart
 			mp_exec <<-SSH
-				echo "$(mac_ip):$app_share_path\t$app_mount_path\tnfs defaults\t0 0" >> /etc/fstab
-				mkdir -p $app_mount_path
-				mount $app_mount_path
+				echo "$(mac_ip):$app_share_path\t$app_mount_path\tnfs defaults\t0 0" | sudo tee -a /etc/fstab
+				sudo mkdir -p $app_mount_path
+				sudo mount $app_mount_path
 			SSH
 
 			begin Assigning Namespace
@@ -453,9 +451,9 @@ app)
 
 		begin Unsharing Application
 		mp_exec <<-SSH
-			umount $app_mount_path
-			sed -i '/$app_id/d' /etc/fstab
-			rmdir $app_mount_path
+			sudo umount $app_mount_path
+			sudo sed -i '/$app_id/d' /etc/fstab
+			sudo rmdir $app_mount_path
 		SSH
 		sudo sed -i '' "/$app_id/d" $exports_path
 		sudo nfsd restart
