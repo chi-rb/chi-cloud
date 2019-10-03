@@ -15,7 +15,7 @@ repo_cloud_path=$repo_mac_path/cloud
 repo_agent_path=$repo_mac_path/$agent_name
 
 user_cloud_path=~/.cloud
-user_conf_path=$use_cloud_path/conf
+user_conf_path=$user_cloud_path/conf
 user_agent_path=~/Library/LaunchAgents/$agent_name
 
 app_cloud_path=cloud
