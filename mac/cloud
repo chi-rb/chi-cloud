@@ -261,12 +261,12 @@ install)
 	begin Choosing Configuration
 	configure
 
-	#if [ ! -d $repo_path ]; then
-		#begin Cloning Repository
-		#git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
-		#sudo mv $repo_tmp_path $repo_path
-		#sudo ln -s $repo_cloud_path $cloud_path
-	#fi
+	if [ ! -d $repo_path ]; then
+		begin Cloning Repository
+		git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
+		sudo mv $repo_tmp_path $repo_path
+		sudo ln -s $repo_cloud_path $cloud_path
+	fi
 
 	if [ ! -f $mp_path ] || [ $mp_ver != $(mp_current_ver) ]; then
 		begin Installing Multipass $mp_ver
@@ -342,10 +342,10 @@ uninstall)
 		rm -rf $user_cloud_path
 	fi
 
-	#if [ -d $repo_path ]; then
-		#begin Removing Repository
-		#sudo rm -rf $repo_path $cloud_path
-	#fi
+	if [ -d $repo_path ]; then
+		begin Removing Repository
+		sudo rm -rf $repo_path $cloud_path
+	fi
 
 	complete Uninstallation
 
