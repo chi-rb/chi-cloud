@@ -173,7 +173,7 @@ mac_ip() {
 }
 
 k8s_exists() {
-	test multipass exec $cluster_name -- test -f /snap/bin/microk8s.kubectl
+	multipass exec $cluster_name -- test -f /snap/bin/microk8s.kubectl
 }
 
 app_exists() {
