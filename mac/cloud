@@ -67,9 +67,6 @@ complete() {
 	if [ ! -z $1 ]; then
 		echo $1 complete
 	fi
-	if [ "$beginned" != true ]; then
-		echo Nothing to do
-	fi
 }
 
 begin() {
@@ -143,7 +140,7 @@ mp_exec() {
 	else
 		cmd=$(</dev/stdin)
 	fi
-	echo "$cmd" | ssh multipass@$cluster_name sudo sh
+	echo "$cmd" | ssh -o 'UserKnownHostsFile=/dev/null' -o 'StrictHostKeyChecking=no' multipass@$cluster_name sudo sh
 }
 
 kubectl() {
