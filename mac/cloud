@@ -172,6 +172,10 @@ mac_ip() {
 	echo $(cluster_ip) | sed 's/[0-9]*$/1/'
 }
 
+k8s_exists() {
+	multipass exec $cluster_name -- which microk8s.kubectl
+}
+
 app_exists() {
 	test -d $app_cloud_path
 }
@@ -282,7 +286,14 @@ install)
 	if ! cluster_exists; then
 		begin Creating Cluster
 		multipass launch -c $cluster_cpus -m $cluster_mem -d $cluster_disk -n $cluster_name --cloud-init $repo_init_path
+	fi
 
+	if ! host_exists; then
+		begin Adding Hostname
+		echo $(cluster_ip) $cluster_name | sudo tee -a $hosts_path
+	fi
+
+	if ! k8s_exists; then
 		begin Installing Kubernetes
 		mp_exec <<-SSH
 			apt-get install -y nfs-common
@@ -296,11 +307,6 @@ install)
 			microk8s.status --wait-ready
 			microk8s.enable dns registry
 		SSH
-	fi
-
-	if ! host_exists; then
-		begin Adding Hostname
-		echo $(cluster_ip) $cluster_name | sudo tee -a $hosts_path
 	fi
 
 	if [ ! -f $user_agent_path ]; then
