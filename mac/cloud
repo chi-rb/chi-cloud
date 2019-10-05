@@ -281,8 +281,6 @@ install)
 
 	if ! cluster_exists; then
 		begin Creating Cluster
-		echo $repo_init_path
-		cat $repo_init_path
 		multipass launch -c $cluster_cpus -m $cluster_mem -d $cluster_disk -n $cluster_name --cloud-init $repo_init_path
 
 		begin Installing Kubernetes
