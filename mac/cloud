@@ -10,6 +10,8 @@ agent_name=com.cloud.plist
 repo_path=/usr/local/cloud
 repo_tmp_path=/tmp/chi-cloud
 repo_app_path=$repo_path/app
+repo_cluster_path=$repo_path/cluster
+repo_init_path=$repo_cluster_path/cloud-init.yml
 repo_mac_path=$repo_path/mac
 repo_cloud_path=$repo_mac_path/cloud
 repo_agent_path=$repo_mac_path/$agent_name
@@ -46,19 +48,22 @@ conf_names=(
 conf_descs=(
 	'Multipass version'
 	'Cluster name'
-	'Cluster machine memory'
-	'Cluster machine cpus'
-	'Cluster machine disk'
+	'Cluster memory'
+	'Cluster cpus'
+	'Cluster disk'
 )
 
 ok() {
 	if [ "$beginned" = true ]; then
-		echo "Ok"
+		echo Ok
 	fi
 }
 
 complete() {
 	ok
+	if [ "$beginned" = true ]; then
+		echo
+	fi
 	if [ ! -z $1 ]; then
 		echo $1 complete
 	fi
@@ -133,11 +138,12 @@ export_exists() {
 }
 
 mp_exec() {
-	script_path=/tmp/$(gen_id)
-	echo "$@\nrm \$0" >> $script_path
-	multipass transfer $script_path cluster:$script_path
-	rm $script_path
-	multipass exec $cluster_name -- sudo sh $script_path
+	if [ $# != 0 ]; then
+		cmd=$@
+	else
+		cmd=$(</dev/stdin)
+	fi
+	echo "$cmd" | ssh multipass@$cluster_name sudo sh
 }
 
 kubectl() {
@@ -255,12 +261,12 @@ install)
 	begin Choosing Configuration
 	configure
 
-	if [ ! -d $repo_path ]; then
-		begin Cloning Repository
-		git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
-		sudo mv $repo_tmp_path $repo_path
-		sudo ln -s $repo_cloud_path $cloud_path
-	fi
+	#if [ ! -d $repo_path ]; then
+		#begin Cloning Repository
+		#git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
+		#sudo mv $repo_tmp_path $repo_path
+		#sudo ln -s $repo_cloud_path $cloud_path
+	#fi
 
 	if [ ! -f $mp_path ] || [ $mp_ver != $(mp_current_ver) ]; then
 		begin Installing Multipass $mp_ver
@@ -275,7 +281,9 @@ install)
 
 	if ! cluster_exists; then
 		begin Creating Cluster
-		multipass launch -c $cluster_cpus -m $cluster_mem -d $cluster_disk -n $cluster_name
+		echo $repo_init_path
+		cat $repo_init_path
+		multipass launch -c $cluster_cpus -m $cluster_mem -d $cluster_disk -n $cluster_name --cloud-init $repo_init_path
 
 		begin Installing Kubernetes
 		mp_exec <<-SSH
@@ -334,8 +342,10 @@ uninstall)
 		rm -rf $user_cloud_path
 	fi
 
-	begin Removing Repository
-	sudo rm -rf $repo_path $cloud_path
+	#if [ -d $repo_path ]; then
+		#begin Removing Repository
+		#sudo rm -rf $repo_path $cloud_path
+	#fi
 
 	complete Uninstallation
 
@@ -432,7 +442,7 @@ app)
 			echo $app_share_path -mapall=$(id -u) | sudo tee -a $exports_path
 			sudo nfsd restart
 			mp_exec <<-SSH
-				echo "$(mac_ip):$app_share_path\t$app_mount_path\tnfs defaults\t0 0" >> /etc/fstab
+				echo "$mac_ip:$app_share_path\t$app_mount_path\tnfs defaults\t0 0" >> /etc/fstab
 				mkdir -p $app_mount_path
 				mount $app_mount_path
 			SSH
@@ -456,7 +466,7 @@ app)
 		begin Unsharing Application
 		mp_exec <<-SSH
 			umount $app_mount_path
-			sed -i '/$app_id/d' /etc/fstab
+			sed -i "/$app_id/d" /etc/fstab
 			rmdir $app_mount_path
 		SSH
 		sudo sed -i '' "/$app_id/d" $exports_path

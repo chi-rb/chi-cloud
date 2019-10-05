@@ -1,0 +1,4 @@
+runcmd:
+  - sudo sed -i 's/nullok_secure/nullok/' /etc/pam.d/common-auth
+	- sudo sed -i 's/PermitEmptyPasswords no/PermitEmptyPasswords yes/' /etc/ssh/sshd_config
+	- sudo systemctl restart sshd
