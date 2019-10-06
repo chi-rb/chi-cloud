@@ -3,3 +3,4 @@ runcmd:
   - sudo sed -i 's/#PermitEmptyPasswords no/PermitEmptyPasswords yes/' /etc/ssh/sshd_config
   - sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
   - sudo systemctl restart sshd
+  - sudo passwd -d multipass
