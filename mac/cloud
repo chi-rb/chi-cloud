@@ -368,6 +368,7 @@ update)
 
 	begin Updating Repository
 	git -C $repo_path pull
+	git checkout $2
 	
 	complete Update
 
