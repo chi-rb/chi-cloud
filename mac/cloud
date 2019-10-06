@@ -519,7 +519,7 @@ app)
 			else
 				mkdir -p $app_envs_path
 				touch $app_env_path
-				cloud envs edit $4
+				cloud app envs edit $4
 			fi
 
 		;;
@@ -562,6 +562,9 @@ app)
 
 		load_app
 		app_kubectl apply -Rf $(process_ymls build)
+		ok
+
+		echo "\nUse \`cloud app log <pod-name>\` to see logs"
 
 	;;
 	deploy)
