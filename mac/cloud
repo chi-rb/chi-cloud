@@ -39,14 +39,14 @@ vm_cpus=2
 vm_disk=10G
 
 conf_names=(
-	mp_ver
-	vm_name
-	vm_mem
-	vm_cpus
-	vm_disk
-)
+		mp_ver
+		vm_name
+		vm_mem
+		vm_cpus
+		vm_disk
+		)
 conf_descs=(
-	'Multipass version'
+		'Multipass version'
 	'Virtual machine name'
 	'Virtual machine memory'
 	'Virtual machine cpus'
@@ -435,7 +435,7 @@ app)
 				echo '# Cloud' | sudo tee -a $exports_path
 			fi
 			echo $app_share_path -mapall=$(id -u) | sudo tee -a $exports_path
-			sudo nfsd restart
+			sudo nfsd update
 			mp_exec <<-SSH
 				echo "$(mac_ip):$app_share_path\t$app_mount_path\tnfs defaults\t0 0" >> /etc/fstab
 				mkdir -p $app_mount_path
@@ -470,8 +470,9 @@ app)
 			sed -i "/$app_id/d" /etc/fstab
 			rmdir $app_mount_path
 		SSH
-		sudo sed -i '' "/$app_id/d" $exports_path
-		sudo nfsd restart
+		escaped_app_share_path=$(echo $app_share_path | sed 's/\//\\\//g')
+		sudo sed -i '' "/$escaped_app_share_path/d" $exports_path
+		sudo nfsd update
 
 		begin Removing Cloud Folder
 		rm -rf $app_cloud_path
