@@ -4,7 +4,9 @@ Orchestrates Rails+Kubernetes Clouds.
 
 ## Why?
 
-I was strugglying to manage the complexity introduced by the amount of tools that modern website development involve. So I decided to come up with a orchestration layer that exposes a simple api to manage the infrastructure in a standarized and unifyied way.
+I was strugglying to manage the complexity introduced by the amount of tools that modern website development involve.
+
+So I decided to come up with a orchestration layer that exposes a simple api to manage the infrastructure in a standarized and unifyied way.
 
 ## Install
 
@@ -35,7 +37,7 @@ NOTE: In some rare cases, might need to run `cloud reinstall`
 
 The script it's using [microk8s](https://microk8s.io) to manage kubernetes.
 
-NOTE: All commands related to the virtual machine are prefixed with `cloud app` and are desgined to be executed inside the application path.
+NOTE: All commands for the are prefixed with `cloud app` and are desgined to be executed inside the application path.
 
 ### Init
 
