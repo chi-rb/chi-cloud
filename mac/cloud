@@ -341,6 +341,7 @@ uninstall)
 	if export_exists; then
 		begin Removing Shared Folder
 		sudo sed -i '' '/# Cloud/,$ d' /etc/exports
+		sudo nfsd update
 	fi
 
 	if [ -d $user_cloud_path ]; then
