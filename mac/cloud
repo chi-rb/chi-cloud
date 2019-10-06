@@ -10,8 +10,8 @@ agent_name=com.cloud.plist
 repo_path=/usr/local/cloud
 repo_tmp_path=/tmp/chi-cloud
 repo_app_path=$repo_path/app
-repo_cluster_path=$repo_path/cluster
-repo_init_path=$repo_cluster_path/cloud-init.yml
+repo_vm_path=$repo_path/vm
+repo_init_path=$repo_vm_path/cloud-init.yml
 repo_mac_path=$repo_path/mac
 repo_cloud_path=$repo_mac_path/cloud
 repo_agent_path=$repo_mac_path/$agent_name
@@ -33,24 +33,24 @@ mp_pkg_url=https://github.com/CanonicalLtd/multipass/releases/download/v$mp_ver/
 mp_pkg_path=$tmp_path/multipass.pkg
 mp_uninstall_path=/Library/Application\ Support/com.canonical.multipass/uninstall.sh
 
-cluster_name=cluster
-cluster_mem=2G
-cluster_cpus=2
-cluster_disk=10G
+vm_name=cloud
+vm_mem=2G
+vm_cpus=2
+vm_disk=10G
 
 conf_names=(
 	mp_ver
-	cluster_name
-	cluster_mem
-	cluster_cpus
-	cluster_disk
+	vm_name
+	vm_mem
+	vm_cpus
+	vm_disk
 )
 conf_descs=(
 	'Multipass version'
-	'Cluster name'
-	'Cluster memory'
-	'Cluster cpus'
-	'Cluster disk'
+	'Virtual machine name'
+	'Virtual machine memory'
+	'Virtual machine cpus'
+	'Virtual machine disk'
 )
 
 ok() {
@@ -122,12 +122,12 @@ mp_current_ver() {
 	echo $(multipass version | head -n1 | awk '{ print $2 }' | sed 's/+.*//')
 }
 
-cluster_exists() {
-	multipass info $cluster_name > /dev/null 2>&1
+vm_exists() {
+	multipass info $vm_name > /dev/null 2>&1
 }
 
 host_exists() {
-	sudo grep $cluster_name $hosts_path > /dev/null 2>&1
+	sudo grep $vm_name $hosts_path > /dev/null 2>&1
 }
 
 export_exists() {
@@ -140,7 +140,7 @@ mp_exec() {
 	else
 		cmd=$(</dev/stdin)
 	fi
-	ssh -tq -o 'UserKnownHostsFile=/dev/null' -o 'StrictHostKeyChecking=no' multipass@$cluster_name sudo sh -c "$cmd"
+	echo "$cmd" | ssh -q -o 'UserKnownHostsFile=/dev/null' -o 'StrictHostKeyChecking=no' multipass@$vm_name sudo sh
 }
 
 kubectl() {
@@ -165,16 +165,16 @@ gen_id() {
 	echo $(uuidgen | tr '[:upper:]' '[:lower:]' | sed 's/-//g')
 }
 
-cluster_ip() {
-	echo $(multipass info $cluster_name | grep IP | awk '{ print $2 }')
+vm_ip() {
+	echo $(multipass info $vm_name | grep IP | awk '{ print $2 }')
 }
 
 mac_ip() {
-	echo $(cluster_ip) | sed 's/[0-9]*$/1/'
+	echo $(vm_ip) | sed 's/[0-9]*$/1/'
 }
 
 k8s_exists() {
-	multipass exec $cluster_name -- test -f /snap/bin/microk8s.kubectl
+	multipass exec $vm_name -- test -f /snap/bin/microk8s.kubectl
 	return $?
 }
 
@@ -190,7 +190,7 @@ load_app() {
 	app_mount_path=/mnt/$app_id
 	app_share_path=$(pwd)
 	if [ $app_env_name = development ]; then
-		registry_url=$(cluster_ip):32000
+		registry_url=$(vm_ip):32000
 	fi
 	app_path=$app_mount_path
 	app_env=$app_env_name
@@ -267,12 +267,12 @@ install)
 	begin Choosing Configuration
 	configure
 
-	if [ ! -d $repo_path ]; then
-		begin Cloning Repository
-		git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
-		sudo mv $repo_tmp_path $repo_path
-		sudo ln -s $repo_cloud_path $cloud_path
-	fi
+	#if [ ! -d $repo_path ]; then
+		#begin Cloning Repository
+		#git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
+		#sudo mv $repo_tmp_path $repo_path
+		#sudo ln -s $repo_cloud_path $cloud_path
+	#fi
 
 	if [ ! -f $mp_path ] || [ $mp_ver != $(mp_current_ver) ]; then
 		begin Installing Multipass $mp_ver
@@ -285,14 +285,14 @@ install)
 		rm $mp_pkg_path
 	fi
 
-	if ! cluster_exists; then
-		begin Creating Cluster
-		multipass launch -c $cluster_cpus -m $cluster_mem -d $cluster_disk -n $cluster_name --cloud-init $repo_init_path
+	if ! vm_exists; then
+		begin Creating Virtual Machine
+		multipass launch -c $vm_cpus -m $vm_mem -d $vm_disk -n $vm_name --cloud-init $repo_init_path
 	fi
 
 	if ! host_exists; then
 		begin Adding Hostname
-		echo $(cluster_ip) $cluster_name | sudo tee -a $hosts_path
+		echo $(vm_ip) $vm_name | sudo tee -a $hosts_path
 	fi
 
 	if ! k8s_exists; then
@@ -335,7 +335,7 @@ uninstall)
 
 	if host_exists; then
 		begin Removing Hostname
-		sudo sed -i '' "/$cluster_name/d" $hosts_path
+		sudo sed -i '' "/$vm_name/d" $hosts_path
 	fi
 
 	if export_exists; then
@@ -348,10 +348,10 @@ uninstall)
 		rm -rf $user_cloud_path
 	fi
 
-	if [ -d $repo_path ]; then
-		begin Removing Repository
-		sudo rm -rf $repo_path $cloud_path
-	fi
+	#if [ -d $repo_path ]; then
+		#begin Removing Repository
+		#sudo rm -rf $repo_path $cloud_path
+	#fi
 
 	complete Uninstallation
 
@@ -367,50 +367,45 @@ update)
 
 	begin Updating Repository
 	git -C $repo_path pull
+	
+	complete Update
 
 ;;
-cluster)
+vm)
 
 	case $2 in
 	start)
 
-		multipass start $cluster_name
+		multipass start $vm_name
 
 	;;
 	stop)
-		multipass stop $cluster_name
+		multipass stop $vm_name
 
 	;;
 	restart)
 
-		cloud stop
+		cloud vm stop
 		echo
-		cloud start
+		cloud vm start
 
 	;;
 	shell)
 
-		multipass shell $cluster_name
-
-	;;
-	status)
-
-		mp_exec top
+		multipass shell $vm_name
 
 	;;
 	help)
 
 		cat <<-DOC
-			Usage: cloud cluster <commands> [options]
-			Manages cluster.
+			Usage: cloud vm <commands> [options]
+			Manages virtual machine.
 
 			Available commands:
-			  start         Boots cluster
-			  stop          Halts cluster
+			  start         Boots virtual machine
+			  stop          Halts virtual machine
 			  restart       Stops and starts
-			  clear         Deletes all pods
 			  shell         Attachs bash session
-			  status        Attachs top session
 			  help          Prints documentation
 		DOC
 
@@ -459,7 +454,7 @@ app)
 	open)
 
 		load_app
-		open "http://cluster:$rails_port"
+		open "http://$vm_name:$rails_port"
 
 	;;
 	remove)
@@ -634,7 +629,7 @@ help)
 		  install       Setups cloud
 		  uninstall     Unsetups cloud
 		  reinstall     Installs and uninstalls
-		  cluster       Manages cluster
+		  vm            Manages virtual machine
 		  app           Manages app
 		  help          Prints documentation
 	DOC
