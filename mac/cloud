@@ -65,7 +65,7 @@ complete() {
 		echo
 	fi
 	if [ ! -z $1 ]; then
-		echo $1 complete
+		echo $1 Complete
 	fi
 }
 
@@ -140,21 +140,25 @@ mp_exec() {
 	else
 		cmd=$(</dev/stdin)
 	fi
-	echo "$cmd" | ssh -o 'UserKnownHostsFile=/dev/null' -o 'StrictHostKeyChecking=no' multipass@$cluster_name sudo sh
+	echo "$cmd" | ssh -q -o 'UserKnownHostsFile=/dev/null' -o 'StrictHostKeyChecking=no' multipass@$cluster_name sudo sh
 }
 
 kubectl() {
-	mp_exec microk8s.kubectl --namespace $app_id $@
+	mp_exec microk8s.kubectl $@
+}
+
+app_kubectl() {
+	kubectl --namespace $app_id $@
 }
 
 find_pod() {
-	echo $(kubectl get pod -l "name=$1" -o jsonpath='{.items[0].metadata.name}')
+	echo $(app_kubectl get pod -l "name=$1" -o jsonpath='{.items[0].metadata.name}')
 }
 
 pod_exec() {
 	name=$1
 	shift
-	kubectl exec -it $(find_pod $name) -- $@
+	app_kubectl exec -it $(find_pod $name) -- $@
 }
 
 gen_id() {
@@ -386,7 +390,6 @@ cluster)
 	;;
 	clear)
 
-		load_app
 		kubectl delete --all pods
 
 	;;
@@ -444,7 +447,7 @@ app)
 			echo $app_share_path -mapall=$(id -u) | sudo tee -a $exports_path
 			sudo nfsd restart
 			mp_exec <<-SSH
-				echo "$mac_ip:$app_share_path\t$app_mount_path\tnfs defaults\t0 0" >> /etc/fstab
+				echo "$(mac_ip):$app_share_path\t$app_mount_path\tnfs defaults\t0 0" >> /etc/fstab
 				mkdir -p $app_mount_path
 				mount $app_mount_path
 			SSH
@@ -452,10 +455,17 @@ app)
 			begin Assigning Namespace
 			kubectl create namespace $app_id
 
-			complete
+			complete Initialization
 		else
 			echo Already exists
 		fi
+
+	;;
+	open)
+
+		load_app
+
+		open "http://cluster:$rails_port"
 
 	;;
 	remove)
@@ -477,7 +487,14 @@ app)
 		begin Removing Cloud Folder
 		rm -rf $app_cloud_path
 
-		complete
+		complete Removal
+
+	;;
+	clear)
+
+		load_app
+
+		app_kubectl delete --all pods
 
 	;;
 	envs)
@@ -544,13 +561,13 @@ app)
 	build)
 
 		load_app
-		kubectl apply -Rf $(process_ymls build)
+		app_kubectl apply -Rf $(process_ymls build)
 
 	;;
 	deploy)
 
 		load_app
-		kubectl apply -Rf "$(process_ymls deploy)"
+		app_kubectl apply -Rf "$(process_ymls deploy)"
 
 	;;
 	undeploy)
@@ -576,10 +593,10 @@ app)
 		load_app
 		case $3 in
 		'')
-			kubectl get pods
+			app_kubectl get pods
 		;;
 		*)
-			kubectl describe pod $3
+			app_kubectl describe pod $3
 		;;
 		esac
 
@@ -587,7 +604,7 @@ app)
 	log)
 
 		load_app
-		kubectl logs -f $(find_pod ${3:-rails})
+		app_kubectl logs -f $(find_pod ${3:-rails})
 
 	;;
 	help)
