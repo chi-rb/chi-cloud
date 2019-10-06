@@ -140,7 +140,7 @@ mp_exec() {
 	else
 		cmd=$(</dev/stdin)
 	fi
-	echo "$cmd" | ssh -q -o 'UserKnownHostsFile=/dev/null' -o 'StrictHostKeyChecking=no' multipass@$cluster_name sudo sh
+	ssh -tq -o 'UserKnownHostsFile=/dev/null' -o 'StrictHostKeyChecking=no' multipass@$cluster_name sudo sh -c "$cmd"
 }
 
 kubectl() {
@@ -388,11 +388,6 @@ cluster)
 		cloud start
 
 	;;
-	clear)
-
-		kubectl delete --all pods
-
-	;;
 	shell)
 
 		multipass shell $cluster_name
@@ -464,7 +459,6 @@ app)
 	open)
 
 		load_app
-
 		open "http://cluster:$rails_port"
 
 	;;
@@ -488,13 +482,6 @@ app)
 		rm -rf $app_cloud_path
 
 		complete Removal
-
-	;;
-	clear)
-
-		load_app
-
-		app_kubectl delete --all pods
 
 	;;
 	envs)
@@ -564,7 +551,7 @@ app)
 		app_kubectl apply -Rf $(process_ymls build)
 		ok
 
-		echo "\nUse \`cloud app log <pod-name>\` to see logs"
+		echo "\nHINT: Use \`cloud app log <pod-name>\` to see logs"
 
 	;;
 	deploy)
@@ -576,7 +563,7 @@ app)
 	undeploy)
 
 		load_app
-		echo "$(process_ymls deploy)"
+		app_kubectl delete --all deployments
 
 	;;
 	console)
