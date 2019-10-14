@@ -1,56 +1,52 @@
 #!/bin/sh
 
-tmp_path=/tmp
 hosts_path=/etc/hosts
-exports_path=/etc/exports
 bin_path=/usr/local/bin
 cloud_path=$bin_path/cloud
 agent_name=com.cloud.plist
+
+tmp_path=/tmp
+tmp_conf_path=$tmp_path/conf
+
+exports_path=/etc/exports
+exports_home_path=/System/Volumes/Data$HOME
 
 repo_path=/usr/local/cloud
 repo_tmp_path=/tmp/chi-cloud
 repo_app_path=$repo_path/app
 repo_vm_path=$repo_path/vm
-repo_init_path=$repo_vm_path/cloud-init.yml
+repo_initrd_path=$repo_vm_path/initrd
+repo_vmlinuz_path=$repo_vm_path/vmlinuz
+repo_disk_path=$repo_vm_path/disk.img.xz
 repo_mac_path=$repo_path/mac
+repo_xhyve_path=$repo_mac_path/xhyve
 repo_cloud_path=$repo_mac_path/cloud
-repo_agent_path=$repo_mac_path/$agent_name
 
-user_cloud_path=~/.cloud
+user_cloud_path=$HOME/.cloud
 user_conf_path=$user_cloud_path/conf
-user_agent_path=~/Library/LaunchAgents/$agent_name
+user_disk_path=$user_cloud_path/disk.img
+user_agent_path=$HOME/Library/LaunchAgents/$agent_name
 
-app_cloud_path=cloud
+app_path=$PWD
+app_cloud_path=$app_path/cloud
 app_tmp_path=$app_cloud_path/tmp
 app_conf_path=$app_cloud_path/conf
 app_envs_path=$app_cloud_path/envs
 app_build_path=$app_cloud_path/build
 app_deploy_path=$app_cloud_path/deploy
 
-mp_path=$bin_path/multipass
-mp_ver=0.8.0
-mp_pkg_url=https://github.com/CanonicalLtd/multipass/releases/download/v$mp_ver/multipass-$mp_ver%2Bmac-Darwin.pkg
-mp_pkg_path=$tmp_path/multipass.pkg
-mp_uninstall_path=/Library/Application\ Support/com.canonical.multipass/uninstall.sh
-
+vm_user=hacker
 vm_name=cloud
 vm_mem=2G
 vm_cpus=2
-vm_disk=10G
 
 conf_names=(
-		mp_ver
-		vm_name
-		vm_mem
-		vm_cpus
-		vm_disk
-		)
+	vm_mem
+	vm_cpus
+)
 conf_descs=(
-		'Multipass version'
-	'Virtual machine name'
 	'Virtual machine memory'
 	'Virtual machine cpus'
-	'Virtual machine disk'
 )
 
 ok() {
@@ -118,33 +114,33 @@ configure() {
 	fi
 }
 
-mp_current_ver() {
-	echo $(multipass version | head -n1 | awk '{ print $2 }' | sed 's/+.*//')
-}
-
 vm_exists() {
-	multipass info $vm_name > /dev/null 2>&1
+	test ! -z $vm_ip
 }
 
 host_exists() {
-	sudo grep $vm_name $hosts_path > /dev/null 2>&1
+	sudo grep $vm_name $hosts_path >/dev/null 2>&1
 }
 
 export_exists() {
-	test -f $exports_path && sudo grep '# Cloud' $exports_path > /dev/null 2>&1
+	test -f $exports_path && sudo grep $exports_home_path $exports_path > /dev/null 2>&1
 }
 
-mp_exec() {
+vm_ssh() {
+	ssh -q -o 'UserKnownHostsFile=/dev/null' -o 'StrictHostKeyChecking=no' $vm_user@$vm_name $@
+}
+
+vm_exec() {
 	if [ $# != 0 ]; then
 		cmd=$@
 	else
 		cmd=$(</dev/stdin)
 	fi
-	echo "$cmd" | ssh -q -o 'UserKnownHostsFile=/dev/null' -o 'StrictHostKeyChecking=no' multipass@$vm_name sudo sh
+	echo "$cmd" | $(vm_ssh sudo sh)
 }
 
 kubectl() {
-	mp_exec microk8s.kubectl $@
+	vm_exec microk8s.kubectl $@
 }
 
 app_kubectl() {
@@ -161,23 +157,6 @@ pod_exec() {
 	app_kubectl exec -it $(find_pod $name) -- $@
 }
 
-gen_id() {
-	echo $(uuidgen | tr '[:upper:]' '[:lower:]' | sed 's/-//g')
-}
-
-vm_ip() {
-	echo $(multipass info $vm_name | grep IP | awk '{ print $2 }')
-}
-
-mac_ip() {
-	echo $(vm_ip) | sed 's/[0-9]*$/1/'
-}
-
-k8s_exists() {
-	multipass exec $vm_name -- test -f /snap/bin/microk8s.kubectl
-	return $?
-}
-
 app_exists() {
 	test -d $app_cloud_path
 }
@@ -187,12 +166,9 @@ load_app() {
 	ensure_app_env $app_env_name
 	. $app_conf_path
 	. $app_env_path
-	app_mount_path=/mnt/$app_id
-	app_share_path=$(pwd)
 	if [ $app_env_name = development ]; then
-		registry_url=$(vm_ip):32000
+		registry_url=$vm_ip:32000
 	fi
-	app_path=$app_mount_path
 	app_env=$app_env_name
 }
 
@@ -246,7 +222,7 @@ process_ymls() {
 		done
 		echo "$content" >> $yml_tmp_path
 	done
-	echo /mnt/$app_id/$app_tmp_path
+	echo $app_tmp_path
 }
 
 edit() {
@@ -272,49 +248,69 @@ install)
 		git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
 		sudo mv $repo_tmp_path $repo_path
 		sudo ln -s $repo_cloud_path $cloud_path
-	fi
-
-	if [ ! -f $mp_path ] || [ $mp_ver != $(mp_current_ver) ]; then
-		begin Installing Multipass $mp_ver
-		if [ -f $mp_path ] && [ ! -z "$(sudo pgrep multipass)" ]; then
-			echo Multipass is running, close it and run the script again
-			exit 1
-		fi
-		curl -Lo $mp_pkg_path $mp_pkg_url
-		sudo installer -pkg $mp_pkg_path -target /
-		rm $mp_pkg_path
+		curl -o $repo_initrd_path https://chi-rb.s3.amazonaws.com/initrd 
+		curl -o $repo_vmlinuz_path https://chi-rb.s3.amazonaws.com/initrd
+		curl -o $repo_disk_path https://chi-rb.s3.amazonaws.com/disk.img.xz
 	fi
 
 	if ! vm_exists; then
 		begin Creating Virtual Machine
-		multipass launch -c $vm_cpus -m $vm_mem -d $vm_disk -n $vm_name --cloud-init $repo_init_path
+		tar xJvf $repo_disk_path -C $user_cloud_path
+		vm_id=$(uuidgen)
+		cat <<-XML | sudo tee $user_agent_path >/dev/null
+			<?xml version="1.0" encoding="UTF-8"?>
+			<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+			<plist version="1.0">
+				<dict>
+					<key>Label</key>
+					<string>com.cloud</string>
+					<key>ProgramArguments</key>
+					<array>
+						<string>$repo_xhyve_path</string>
+						<string>-A</string>
+						<string>-U</string>
+						<string>$vm_id</string>
+						<string>-c</string>
+						<string>$vm_cpus</string>
+						<string>-m</string>
+						<string>$vm_mem</string>
+						<string>-s</string>
+						<string>0,hostbridge</string>
+						<string>-s</string>
+						<string>2,virtio-net</string>
+						<string>-s</string>
+						<string>4,virtio-blk,$user_disk_path</string>
+						<string>-f</string>
+						<string>kexec,$repo_vmlinuz_path,$repo_initrd_path,root=/dev/vda1 ro</string>
+					</array>
+					<key>RunAtLoad</key>
+					<true/>
+				</dict>
+			</plist>
+		XML
+		sudo launchctl load -w $user_agent_path
+		echo Booting...
+		nc -l 1234 > $tmp_conf_path
+		. $tmp_conf_path
+		cat $tmp_conf_path >> $user_conf_path
+		rm $tmp_conf_path
+		echo Ready
 	fi
 
 	if ! host_exists; then
 		begin Adding Hostname
-		echo $(vm_ip) $vm_name | sudo tee -a $hosts_path
+		echo $vm_ip $vm_name | sudo tee -a $hosts_path
 	fi
 
-	if ! k8s_exists; then
-		begin Installing Kubernetes
-		mp_exec <<-SSH
-			apt-get install -y nfs-common
-			snap install microk8s --classic
-			cat <<-CONF >> /var/snap/microk8s/current/args/kube-apiserver
-
-			# Enable insecure connections
-			--insecure-bind-address=0.0.0.0
-			--insecure-port=8080
-			CONF
-			microk8s.status --wait-ready
-			microk8s.enable dns registry
+	if ! export_exists; then
+		begin Sharing Home Folder
+		echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
+		sudo nfsd update
+		vm_exec <<-SSH
+			echo "$mac_ip:$exports_home_path\t$HOME\tnfs defaults\t0 0" >> /etc/fstab
+			mkdir -p $HOME
+			mount $HOME
 		SSH
-	fi
-
-	if [ ! -f $user_agent_path ]; then
-		begin Installing Agent
-		ln -s $repo_agent_path $user_agent_path
-		launchctl load -w $user_agent_path
 	fi
 
 	complete Installation
@@ -323,14 +319,9 @@ install)
 uninstall)
 
 	if [ -f $user_agent_path ]; then
-		begin Uninstalling Agent
-		launchctl unload -w $user_agent_path
-		rm $user_agent_path
-	fi
-
-	if [ -f $mp_path ]; then
-		begin Uninstalling Multipass
-		yes | sudo sh "$mp_uninstall_path"
+		begin Removing Virtual Machine
+		sudo launchctl unload -w $user_agent_path
+		sudo rm $user_agent_path
 	fi
 
 	if host_exists; then
@@ -339,8 +330,9 @@ uninstall)
 	fi
 
 	if export_exists; then
-		begin Removing Shared Folder
-		sudo sed -i '' '/# Cloud/,$ d' /etc/exports
+		begin Unsharing Home Folder
+		escaped_exports_home_path=$(echo $exports_home_path | sed 's/\//\\\//g')
+		sudo sed -i '' "/$escaped_exports_home_path/d" $exports_path
 		sudo nfsd update
 	fi
 
@@ -378,11 +370,12 @@ vm)
 	case $2 in
 	start)
 
-		multipass start $vm_name
+		sudo launchctl start $user_agent_path
 
 	;;
 	stop)
-		multipass stop $vm_name
+
+		sudo launchctl stop $user_agent_path
 
 	;;
 	restart)
@@ -394,7 +387,7 @@ vm)
 	;;
 	shell)
 
-		multipass shell $vm_name
+		vm_ssh
 
 	;;
 	help)
@@ -428,21 +421,9 @@ app)
 		if ! app_exists; then
 			begin Generating Cloud Folder
 			cp -r $repo_app_path $app_cloud_path
-			app_id=$(gen_id)
+			app_id=$(uuidgen)
 			echo app_id=$app_id >> $app_conf_path
 			load_app
-
-			begin Sharing Application
-			if ! export_exists; then
-				echo '# Cloud' | sudo tee -a $exports_path
-			fi
-			echo $app_share_path -mapall=$(id -u) | sudo tee -a $exports_path
-			sudo nfsd update
-			mp_exec <<-SSH
-				echo "$(mac_ip):$app_share_path\t$app_mount_path\tnfs defaults\t0 0" >> /etc/fstab
-				mkdir -p $app_mount_path
-				mount $app_mount_path
-			SSH
 
 			begin Assigning Namespace
 			kubectl create namespace $app_id
@@ -465,16 +446,6 @@ app)
 
 		begin Removing Namespace
 		kubectl delete namespace $app_id
-
-		begin Unsharing Application
-		mp_exec <<-SSH
-			umount $app_mount_path
-			sed -i "/$app_id/d" /etc/fstab
-			rmdir $app_mount_path
-		SSH
-		escaped_app_share_path=$(echo $app_share_path | sed 's/\//\\\//g')
-		sudo sed -i '' "/$escaped_app_share_path/d" $exports_path
-		sudo nfsd update
 
 		begin Removing Cloud Folder
 		rm -rf $app_cloud_path
@@ -549,7 +520,7 @@ app)
 		app_kubectl apply -Rf $(process_ymls build)
 		ok
 
-		echo "\nHINT: Use \`cloud app log <pod-name>\` to see logs"
+		echo "\nUse \`cloud app log <pod-name>\` to see logs"
 
 	;;
 	deploy)
