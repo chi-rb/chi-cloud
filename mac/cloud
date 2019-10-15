@@ -253,12 +253,11 @@ install)
 		git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
 		sudo mv $repo_tmp_path $repo_path
 		sudo ln -s $repo_cloud_path $cloud_path
+
+		begin Dowloading Images
 		mkdir $repo_vm_path
-		echo Downloading initrd...
 		curl -o $repo_initrd_path $s3_initrd_url
-		echo Downloading vmlinuz...
 		curl -o $repo_vmlinuz_path $s3_vmlinuz_url
-		echo Downloading img...
 		curl -o $repo_disk_path $s3_disk_url
 	fi
 
@@ -298,12 +297,10 @@ install)
 			</plist>
 		XML
 		sudo launchctl load -w $user_agent_path
-		echo Booting...
 		nc -l 1234 > $tmp_conf_path
 		. $tmp_conf_path
 		cat $tmp_conf_path >> $user_conf_path
 		rm $tmp_conf_path
-		echo Ready
 	fi
 
 	if ! host_exists; then
