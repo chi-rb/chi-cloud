@@ -65,9 +65,7 @@ complete() {
 	if [ "$beginned" = true ]; then
 		echo
 	fi
-	if [ ! -z $1 ]; then
-		echo Complete
-	fi
+	echo Complete
 }
 
 begin() {
