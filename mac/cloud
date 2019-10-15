@@ -241,6 +241,7 @@ case $1 in
 install)
 
 	begin Choosing Configuration
+	mkdir $user_cloud_path
 	configure
 
 	if [ ! -d $repo_path ]; then
