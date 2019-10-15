@@ -254,11 +254,11 @@ install)
 		sudo mv $repo_tmp_path $repo_path
 		sudo ln -s $repo_cloud_path $cloud_path
 		mkdir $repo_vm_path
-		echo Downloading initrd
+		echo Downloading initrd...
 		curl -o $repo_initrd_path $s3_initrd_url
-		echo Downloading vmlinuz
+		echo Downloading vmlinuz...
 		curl -o $repo_vmlinuz_path $s3_vmlinuz_url
-		echo Downloading img
+		echo Downloading img...
 		curl -o $repo_disk_path $s3_disk_url
 	fi
 
