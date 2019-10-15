@@ -248,6 +248,7 @@ install)
 		git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
 		sudo mv $repo_tmp_path $repo_path
 		sudo ln -s $repo_cloud_path $cloud_path
+		mkdir $repo_vm_path
 		curl -o $repo_initrd_path https://chi-rb.s3.amazonaws.com/initrd 
 		curl -o $repo_vmlinuz_path https://chi-rb.s3.amazonaws.com/initrd
 		curl -o $repo_disk_path https://chi-rb.s3.amazonaws.com/disk.img.xz
