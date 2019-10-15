@@ -85,12 +85,8 @@ correct() {
 	fi
 }
 
-gen_app_id() {
-	echo $(uuidgen | tr '[:upper:]' '[:lower:]' | sed 's/-//g')
-}
-
-gen_vm_id() {
-	echo $(uuidgen)
+gen_id() {
+	echo $(uuidgen | tr '[:upper:]' '[:lower:]')
 }
 
 configure() {
@@ -270,7 +266,7 @@ install)
 	if ! vm_exists; then
 		begin Creating Virtual Machine
 		tar xJvf $repo_disk_path -C $user_cloud_path
-		vm_id=$(gen_vm_id)
+		vm_id=$(gen_id)
 		cat <<-XML | sudo tee $user_agent_path >/dev/null
 			<?xml version="1.0" encoding="UTF-8"?>
 			<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -426,7 +422,7 @@ app)
 		if ! app_exists; then
 			begin Generating Cloud Folder
 			cp -r $repo_app_path $app_cloud_path
-			app_id=$(gen_app_id)
+			app_id=$(gen_id)
 			echo app_id=$app_id >> $app_conf_path
 			load_app
 
