@@ -387,14 +387,7 @@ vm)
 	;;
 	stop)
 
-		sudo launchctl stop $user_agent_path
-
-	;;
-	restart)
-
-		cloud vm stop
-		echo
-		cloud vm start
+		vm_exec halt
 
 	;;
 	shell)
