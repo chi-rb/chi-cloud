@@ -142,7 +142,7 @@ vm_exec() {
 	else
 		cmd=$(</dev/stdin)
 	fi
-	echo "$cmd" | $(vm_ssh sudo sh)
+	echo "$cmd" | vm_ssh sudo sh
 }
 
 kubectl() {
