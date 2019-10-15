@@ -298,7 +298,7 @@ install)
 				</dict>
 			</plist>
 		XML
-		sudo launchctl load -w $user_agent_path
+		cloud vm start
 		nc -l 1234 > $tmp_conf_path
 		. $tmp_conf_path
 		cat $tmp_conf_path >> $user_conf_path
@@ -378,12 +378,18 @@ vm)
 	case $2 in
 	start)
 
-		sudo launchctl start $user_agent_path
+		sudo launchctl load -w $user_agent_path
 
 	;;
 	stop)
 
-		vm_exec halt
+		sudo launchctl unload -w $user_agent_path
+
+	;;
+	restart)
+
+		cloud vm stop
+		cloud vm start
 
 	;;
 	shell)
