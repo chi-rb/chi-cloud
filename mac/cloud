@@ -66,7 +66,7 @@ complete() {
 		echo
 	fi
 	if [ ! -z $1 ]; then
-		echo $1 Complete
+		echo Complete
 	fi
 }
 
@@ -319,7 +319,7 @@ install)
 		SSH
 	fi
 
-	complete Installation
+	complete
 
 ;;
 uninstall)
@@ -352,7 +352,7 @@ uninstall)
 		sudo rm -rf $repo_path $cloud_path
 	fi
 
-	complete Uninstallation
+	complete
 
 ;;
 reinstall)
@@ -368,7 +368,7 @@ update)
 	git -C $repo_path pull
 	git checkout $2
 	
-	complete Update
+	complete
 
 ;;
 vm)
@@ -434,7 +434,7 @@ app)
 			begin Assigning Namespace
 			kubectl create namespace $app_id
 
-			complete Initialization
+			complete
 		else
 			echo Already exists
 		fi
@@ -456,7 +456,7 @@ app)
 		begin Removing Cloud Folder
 		rm -rf $app_cloud_path
 
-		complete Removal
+		complete
 
 	;;
 	envs)
