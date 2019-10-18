@@ -562,7 +562,7 @@ app)
 			app_kubectl get pods
 		;;
 		*)
-			app_kubectl describe pod $3
+			app_kubectl describe pod $(find_pod ${3:-rails})
 		;;
 		esac
 
