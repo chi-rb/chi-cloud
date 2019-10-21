@@ -4,44 +4,38 @@ Orchestrates Rails+Kubernetes Clouds.
 
 ## Why?
 
-I was strugglying to manage the complexity introduced by the amount of tools that modern website development involve.
+I want to provide a standarized way to manage infrastructure, abstracting all moving parts in a way that you only need to know this api to work.
 
-So I decided to come up with a orchestration layer that exposes a simple api to manage the infrastructure in a standarized and unifyied way.
+## How to install?
 
-## Install
-
-To install copy and paste:
+Copy and past this inside a terminal:
 ```
-sh <(curl -s https://raw.githubusercontent.com/chi-rb/chi-cloud/0.0.1-alpha1/mac/cloud) install
+sh <(curl -s https://raw.githubusercontent.com/chi-rb/chi-cloud/0.0.1-alpha2/mac/cloud) install
 ```
 
-## Uninstall 
+## How to uninstall? 
 
-To uninstall:
+Run this commnad:
 ```
 cloud uninstall
 ```
 
 NOTE: There is a shortcut if you want to resintall `cloud resinstall`
 
-## Update
+## How to update?
 
-To update to a specific version:
+Run this command specifying tag version:
 ```
 cloud update <tag>
 ```
 
-NOTE: In some rare cases, might need to run `cloud reinstall`
+## How to manage apps?
 
-## Application
-
-The script it's using [microk8s](https://microk8s.io) to manage kubernetes.
-
-NOTE: All commands for the are prefixed with `cloud app` and are desgined to be executed inside the application path.
+All commands for the are prefixed with `cloud app` and are desgined to be executed inside the application path.
 
 ### Init
 
-Generate the cloud folder skeleton and share the app into the cloud:
+Generates the cloud folder skeleton and share the app into the cloud:
 ```
 cloud app init
 ```
@@ -53,60 +47,71 @@ Removes the cloud folder and unshares the app from the cloud:
 cloud app remove
 ```
 
-### Help
+### Build
 
-Print documentation using:
+Builds the images needed by the deploy commadn:
 ```
-cloud vm help
+cloud app build
 ```
 
-## Virtual Machine
+### Deploy
 
-The script it's using [multipass](https://multipass.run) to manage virtual machines.
+Deploys the app into the cloud:
+```
+cloud app deploy
+```
 
-NOTE: All commands related to the virtual machine are prefixed with `cloud vm`.
+### Undeploy
+
+Undeploys the app from the cloud:
+```
+cloud app undeploy
+```
+
+## How to manage the vm?
+
+All commands related to the virtual machine are prefixed with `cloud vm`.
 
 ### Start
 
-Start the virtual machine using:
+Starts the virtual machine using:
 ```
 cloud vm start
 ```
 
 ### Stop
 
-Stop the virtual machine:
+Stops the virtual machine:
 ```
 cloud vm stop
 ```
 
 ### Restart
 
-Restart the virtual machine:
+Restarts the virtual machine:
 ```
 cloud vm restart
 ```
 
 ### Shell
 
-Open a bash shell in the virtual machine:
+Opens a bash shell in the virtual machine:
 ```
 cloud vm shell
 ```
 
-### Help
-
-Print documentation:
-```
-cloud vm help
-```
-
-## Help
+## How to check docs?
 
 Print documentation using:
 ```
-cloud help
+cloud [app|vm] help
 ```
+
+## Knonwn issues
+
+### macOS Catalina
+
+New security measures has been added into Catalina, so you need to manually add `/sbin/nfsd` and `/usr/local/cloud/mac/xhyve` into `System Preferences > Security & Privacy > Privacy > Full Disk Access`.
 
 ## Credits
 
