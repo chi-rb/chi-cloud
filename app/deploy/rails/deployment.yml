@@ -16,8 +16,10 @@ spec:
       labels:
         name: rails
     spec:
+      imagePullSecrets:
+        - name: docker
       containers:
-        - image: localhost:32000/rails:latest
+        - image: {{ rails_repo_url }}
           name: rails
           env:
             - name: DB_PASS

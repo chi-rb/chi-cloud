@@ -29,14 +29,19 @@ repo_cloud_path=$repo_mac_path/cloud
 
 user_cloud_path=$HOME/.cloud
 user_conf_path=$user_cloud_path/conf
+user_auth_path=$user_cloud_path/auth.json
+user_secret_path=$user_cloud_path/secret.yml
 user_disk_path=$user_cloud_path/disk.img
 user_agent_path=$HOME/Library/LaunchAgents/$agent_name
 
 app_path=$PWD
 app_cloud_path=$app_path/cloud
 app_tmp_path=$app_cloud_path/tmp
+app_apply_path=$app_tmp_path/apply
+app_data_path=$app_tmp_path/data
 app_conf_path=$app_cloud_path/conf
 app_envs_path=$app_cloud_path/envs
+app_dev_path=$app_envs_path/development
 app_build_path=$app_cloud_path/build
 app_deploy_path=$app_cloud_path/deploy
 
@@ -120,6 +125,13 @@ configure() {
 	fi
 }
 
+authorize() {
+	echo "Enter username: \c"
+	read auth_user
+	echo "Enter password: \c"
+	read auth_pass
+}
+
 vm_exists() {
 	test ! -z $vm_ip
 }
@@ -146,10 +158,11 @@ vm_exec() {
 }
 
 kubectl() {
-	vm_exec microk8s.kubectl $@
+	vm_exec kubectl $@
 }
 
 app_kubectl() {
+	kubectl create namespace $app_id >/dev/null 2>&1
 	kubectl --namespace $app_id $@
 }
 
@@ -172,9 +185,6 @@ load_app() {
 	ensure_app_env $app_env_name
 	. $app_conf_path
 	. $app_env_path
-	if [ $app_env_name = development ]; then
-		registry_url=$vm_ip:32000
-	fi
 	app_env=$app_env_name
 }
 
@@ -211,10 +221,9 @@ ensure_app_env() {
 
 process_ymls() {
 	yml_paths=$(find cloud/$1 -type f -name '*.yml')
-	mkdir -p $app_tmp_path
-	rm -rf $app_tmp_path/*
+	rm -rf $app_apply_path/*
 	for yml_path in $yml_paths; do
-		yml_tmp_path=$app_tmp_path/${yml_path#$app_cloud_path}
+		yml_tmp_path=$app_apply_path/${yml_path#$app_cloud_path}
 		mkdir -p $(dirname $yml_tmp_path)
 		content=$(cat $yml_path)
 		var_names=$(grep -o '{{ [a-z_]* }}' $yml_path | sed 's/[{} ]//g' | uniq)
@@ -228,7 +237,8 @@ process_ymls() {
 		done
 		echo "$content" >> $yml_tmp_path
 	done
-	echo $app_tmp_path
+	cp $user_secret_path $app_apply_path
+	echo $app_apply_path
 }
 
 edit() {
@@ -322,6 +332,32 @@ install)
 	fi
 
 	complete
+
+;;
+authorize)
+
+	begin Authorizing hub.docker.com
+	authorize
+	cat <<-JSON > $user_auth_path
+		{
+		  "auths": {
+		    "https://index.docker.io/v1/": {
+		      "auth": "$(echo "$auth_user:$auth_pass\c" | base64)"
+		    }
+		  }
+		}
+	JSON
+	cat <<-YML > $user_secret_path
+		apiVersion: v1
+		kind: Secret
+		metadata:
+		  name: docker
+		  labels:
+		    name: docker
+		type: kubernetes.io/dockerconfigjson
+		data:
+		  .dockerconfigjson: $(cat $user_auth_path | base64)
+	YML
 
 ;;
 uninstall)
@@ -429,11 +465,13 @@ app)
 			begin Generating Cloud Folder
 			cp -r $repo_app_path $app_cloud_path
 			app_id=$(gen_id)
-			echo app_id=$app_id >> $app_conf_path
+			echo "app_id=$app_id\n" >> $app_conf_path
 			load_app
 
-			begin Assigning Namespace
-			kubectl create namespace $app_id
+			begin Setting Rails Docker Repository
+			echo "Enter url: \c"
+			read rails_repo_url
+			echo "rails_repo_url=$rails_repo_url\n" >> $app_dev_path
 
 			complete
 		else
