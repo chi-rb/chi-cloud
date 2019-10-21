@@ -331,11 +331,6 @@ install)
 		SSH
 	fi
 
-	complete
-
-;;
-authorize)
-
 	begin Authorizing hub.docker.com
 	authorize
 	cat <<-JSON > $user_auth_path
@@ -358,6 +353,8 @@ authorize)
 		data:
 		  .dockerconfigjson: $(cat $user_auth_path | base64)
 	YML
+
+	complete
 
 ;;
 uninstall)
