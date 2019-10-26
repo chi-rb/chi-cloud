@@ -145,16 +145,15 @@ export_exists() {
 }
 
 vm_ssh() {
-	ssh -q -o 'UserKnownHostsFile=/dev/null' -o 'StrictHostKeyChecking=no' $vm_user@$vm_name $@
+	ssh -tq -o 'UserKnownHostsFile=/dev/null' -o 'StrictHostKeyChecking=no' $vm_user@$vm_name $@
 }
 
 vm_exec() {
 	if [ $# != 0 ]; then
-		cmd=$@
+		vm_ssh sudo $@
 	else
-		cmd=$(</dev/stdin)
+		echo $(</dev/stdin) | vm_ssh sudo sh
 	fi
-	echo "$cmd" | vm_ssh sudo sh
 }
 
 kubectl() {
