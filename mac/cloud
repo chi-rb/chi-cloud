@@ -152,7 +152,7 @@ vm_exec() {
 	if [ $# != 0 ]; then
 		vm_ssh sudo $@
 	else
-		echo $(</dev/stdin) | vm_ssh sudo sh
+		vm_ssh sudo sh </dev/stdin
 	fi
 }
 
@@ -354,6 +354,15 @@ install)
 	YML
 
 	complete
+
+;;
+test)
+
+	vm_exec <<-SSH
+		echo "192.168.64.1:$exports_home_path\t$HOME\tnfs defaults\t0 0" >> /etc/fstab
+		mkdir -p $HOME
+		mount $HOME
+	SSH
 
 ;;
 uninstall)
