@@ -36,9 +36,9 @@ user_agent_path=$HOME/Library/LaunchAgents/$agent_name
 
 app_path=$PWD
 app_cloud_path=$app_path/cloud
-app_tmp_path=$app_cloud_path/tmp
+app_tmp_path=$app_path/tmp/cloud
 app_apply_path=$app_tmp_path/apply
-app_data_path=$app_tmp_path/data
+app_images_path=$app_tmp_path/images
 app_conf_path=$app_cloud_path/conf
 app_envs_path=$app_cloud_path/envs
 app_dev_path=$app_envs_path/development
@@ -218,17 +218,17 @@ ensure_app_env() {
 	fi
 }
 
-process_ymls() {
-	yml_paths=$(find cloud/$1 -type f -name '*.yml')
+compile_tpls() {
 	rm -rf $app_apply_path/*
+	yml_paths=$(find cloud/$1 -type f -name '*.yml')
 	for yml_path in $yml_paths; do
-		yml_tmp_path=$app_apply_path/${yml_path#$app_cloud_path}
+		yml_tmp_path=$app_apply_path/${yml_path#cloud}
 		mkdir -p $(dirname $yml_tmp_path)
 		content=$(cat $yml_path)
 		var_names=$(grep -o '{{ [a-z_]* }}' $yml_path | sed 's/[{} ]//g' | uniq)
 		for var_name in $var_names; do
 			if [ -z ${!var_name} ]; then
-				echo {{ $var_name }} undefined, processing $yml_path in $app_env_name
+				echo {{ $var_name }} undefined, compiling $yml_path in $app_env_name
 				exit 1
 			fi
 			var_value=$(echo ${!var_name} | sed 's/\//\\\//g')
@@ -236,8 +236,15 @@ process_ymls() {
 		done
 		echo "$content" >> $yml_tmp_path
 	done
+}
+
+compile_statics() {
 	cp $user_secret_path $app_apply_path
-	echo $app_apply_path
+}
+
+compile_all() {
+	compile_tpls $1
+	compile_statics $1
 }
 
 edit() {
@@ -354,15 +361,6 @@ install)
 	YML
 
 	complete
-
-;;
-test)
-
-	vm_exec <<-SSH
-		echo "192.168.64.1:$exports_home_path\t$HOME\tnfs defaults\t0 0" >> /etc/fstab
-		mkdir -p $HOME
-		mount $HOME
-	SSH
 
 ;;
 uninstall)
@@ -567,7 +565,11 @@ app)
 	build)
 
 		load_app
-		app_kubectl apply -Rf $(process_ymls build)
+		mkdir -p $app_images_path
+		compile_tpls build
+		app_kubectl delete --ignore-not-found=true -Rf $app_apply_path
+		compile_all build
+		app_kubectl apply -Rf $app_apply_path
 		ok
 
 		echo "\nUse \`cloud app log <pod-name>\` to see logs"
@@ -576,7 +578,8 @@ app)
 	deploy)
 
 		load_app
-		app_kubectl apply -Rf "$(process_ymls deploy)"
+		compile_all deploy
+		app_kubectl apply -Rf $app_apply_path
 
 	;;
 	undeploy)
