@@ -145,7 +145,13 @@ export_exists() {
 }
 
 vm_ssh() {
-	ssh -tq -o 'UserKnownHostsFile=/dev/null' -o 'StrictHostKeyChecking=no' $vm_user@$vm_name $@
+	ssh -tq \
+	-o 'ControlMaster=auto' \
+	-o 'ControlPersist=600' \
+	-o 'ControlPath=/tmp/%r@%h' \
+	-o 'UserKnownHostsFile=/dev/null' \
+	-o 'StrictHostKeyChecking=no' \
+	$vm_user@$vm_name $@
 }
 
 vm_exec() {
@@ -436,6 +442,12 @@ vm)
 		vm_ssh
 
 	;;
+	exec)
+
+		shift 2
+		vm_ssh $@
+
+	;;
 	help)
 
 		cat <<-DOC
@@ -447,6 +459,7 @@ vm)
 			  stop          Halts virtual machine
 			  restart       Stops and starts
 			  shell         Attachs bash session
+			  exec          Executes command
 			  help          Prints documentation
 		DOC
 
@@ -600,6 +613,22 @@ app)
 		pod_exec ${3:-rails} /bin/bash
 
 	;;
+	exec)
+
+		load_app
+		shift 2
+		if [ "$2" = -- ]; then
+			name=$1
+			shift 2
+		else
+			if [ "$1" = -- ]; then
+				shift
+			fi
+			name=rails
+		fi
+		pod_exec $name $@
+
+	;;
 	status)
 
 		load_app
@@ -632,6 +661,7 @@ app)
 			  undeploy      Unapplies one or all deploy ymls
 			  console       Attachs rails console
 			  shell         Attachs bash session in pod (rails pod by default)
+			  exec          Executes command in pod
 			  status        Lists or describes pods (lists pods by default)
 			  log           Tails pod logs (rails pod by default)
 			  help          Prints documentation
