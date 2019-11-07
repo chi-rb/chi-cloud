@@ -68,6 +68,54 @@ Undeploys the app from the cloud:
 cloud app undeploy
 ```
 
+### Status
+
+By default prints the status of all pods:
+```
+cloud app status
+```
+
+To get a verbose output of a specific pod:
+```
+cloud app status rails
+```
+
+### Logs
+
+Tails the log of a pod, to use the default rails one:
+```
+cloud app log
+```
+
+To specify which pod:
+```
+cloud app log rails
+```
+
+### Shell
+
+Opens a bash shell in a pod, to use the default rails one:
+```
+cloud app shell
+```
+
+To specify which pod:
+```
+cloud app shell rails
+```
+
+### Exec
+
+Executes command in a pod, to use the default rails one:
+```
+cloud app exec bundle update
+```
+
+To specify which pod:
+```
+cloud app exec rails -- bundle update
+```
+
 ## How to manage the vm?
 
 All commands related to the virtual machine are prefixed with `cloud vm`.
@@ -98,6 +146,13 @@ cloud vm restart
 Opens a bash shell in the virtual machine:
 ```
 cloud vm shell
+```
+
+### Exec
+
+Executes command in the virtual machine:
+```
+cloud vm exec apt update
 ```
 
 ## How to check docs?
