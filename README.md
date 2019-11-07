@@ -80,7 +80,7 @@ To get a verbose output of a specific pod:
 cloud app status rails
 ```
 
-### Logs
+### Log
 
 Tails the log of a pod, to use the default rails one:
 ```
