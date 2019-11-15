@@ -4,6 +4,7 @@ hosts_path=/etc/hosts
 bin_path=/usr/local/bin
 cloud_path=$bin_path/cloud
 agent_name=com.cloud.plist
+rails_pod=rails
 
 tmp_path=/tmp
 tmp_conf_path=$tmp_path/conf
@@ -604,13 +605,13 @@ app)
 	console)
 
 		load_app
-		pod_exec rails bin/rails c
+		pod_exec $rails_pod bin/rails c
 
 	;;
 	shell)
 
 		load_app
-		pod_exec ${3:-rails} /bin/bash
+		pod_exec ${3:-$rails_pod} /bin/bash
 
 	;;
 	exec)
@@ -624,7 +625,7 @@ app)
 			if [ "$1" = -- ]; then
 				shift
 			fi
-			name=rails
+			name=$rails_pod
 		fi
 		pod_exec $name $@
 
@@ -637,7 +638,7 @@ app)
 			app_kubectl get pods
 		;;
 		*)
-			app_kubectl describe pod $(find_pod ${3:-rails})
+			app_kubectl describe pod $(find_pod ${3:-$rails_pod})
 		;;
 		esac
 
@@ -645,7 +646,7 @@ app)
 	log)
 
 		load_app
-		app_kubectl logs -f $(find_pod ${3:-rails})
+		app_kubectl logs -f $(find_pod ${3:-$rails_pod})
 
 	;;
 	help)
