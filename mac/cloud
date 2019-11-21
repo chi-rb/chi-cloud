@@ -39,12 +39,13 @@ app_path=$PWD
 app_cloud_path=$app_path/cloud
 app_tmp_path=$app_path/tmp/cloud
 app_apply_path=$app_tmp_path/apply
-app_images_path=$app_tmp_path/images
-app_conf_path=$app_cloud_path/conf
 app_envs_path=$app_cloud_path/envs
+app_base_path=$app_envs_path/base
 app_dev_path=$app_envs_path/development
+app_prod_path=$app_envs_path/production
 app_build_path=$app_cloud_path/build
 app_deploy_path=$app_cloud_path/deploy
+app_snippets_path=$app_deploy_path/snippets
 
 vm_user=hacker
 vm_name=cloud
@@ -167,19 +168,18 @@ kubectl() {
 	vm_exec kubectl $@
 }
 
-app_kubectl() {
-	kubectl create namespace $app_id >/dev/null 2>&1
-	kubectl --namespace $app_id $@
+expand_pod_name() {
+	echo $app_name-$1-$app_env
 }
 
 find_pod() {
-	echo $(app_kubectl get pod -l "name=$1" -o jsonpath='{.items[0].metadata.name}')
+	echo $(kubectl get pod -l "name=$(expand_pod_name $1)" -o jsonpath='{.items[0].metadata.name}')
 }
 
 pod_exec() {
 	name=$1
 	shift
-	app_kubectl exec -it $(find_pod $name) -- $@
+	kubectl exec -it $(find_pod $name) -- $@
 }
 
 app_exists() {
@@ -188,10 +188,10 @@ app_exists() {
 
 load_app() {
 	app_env_name=${1:-development}
-	ensure_app_env $app_env_name
-	. $app_conf_path
-	. $app_env_path
 	app_env=$app_env_name
+	ensure_app_env $app_env_name
+	. $app_base_path
+	. $app_env_path
 }
 
 ensure_app() {
@@ -225,23 +225,64 @@ ensure_app_env() {
 	fi
 }
 
-compile_tpls() {
-	rm -rf $app_apply_path/*
-	yml_paths=$(find cloud/$1 -type f -name '*.yml')
-	for yml_path in $yml_paths; do
-		yml_tmp_path=$app_apply_path/${yml_path#cloud}
-		mkdir -p $(dirname $yml_tmp_path)
-		content=$(cat $yml_path)
-		var_names=$(grep -o '{{ [a-z_]* }}' $yml_path | sed 's/[{} ]//g' | uniq)
-		for var_name in $var_names; do
-			if [ -z ${!var_name} ]; then
-				echo {{ $var_name }} undefined, compiling $yml_path in $app_env_name
+compile_tpl() {
+	tpl_content=$(cat $1)
+	name=$(expand_pod_name $2)
+	tokens=$(grep -o '{{ [a-z_. ]* }}' $1 | uniq)
+	while read token; do
+		token_args=( $(echo $token | sed 's/{{ //' | sed 's/ }}//') )
+		case $token in
+		{{\ render\ *)
+			render_path=${token_args[1]}
+			render_vars=("${token_args[@]:2}")
+			for render_var in $render_vars; do
+				declare $render_var
+			done
+			render_fullpath=$app_snippets_path/${render_path}.yml
+			token_value=$(compile_tpl $render_fullpath $2)
+			token_value=$(echo "$token_value" | sed 's/\//\\\//g' | tr '\n' '\r')
+			tpl_content=$(echo "$tpl_content" | sed "s/$token/$token_value/g" | tr '\r' '\n')
+		;;
+		*)
+			token_name=${token_args[0]}
+			prefixed_token_name=${2}_${token_name}
+			if [ ! -z ${!prefixed_token_name} ]; then
+				normalized_token_name=$prefixed_token_name
+			elif [ ! -z ${!token_name} ]; then
+				normalized_token_name=$token_name
+			else
+				echo $token undefined, compiling $1 in $app_env_name
 				exit 1
 			fi
-			var_value=$(echo ${!var_name} | sed 's/\//\\\//g')
-			content=$(echo "$content" | sed "s/{{ $var_name }}/$var_value/g")
-		done
-		echo "$content" >> $yml_tmp_path
+			token_value=$(echo ${!normalized_token_name} | sed 's/\//\\\//g')
+			tpl_content=$(echo "$tpl_content" | sed "s/$token/$token_value/g")
+		;;
+		esac
+	done <<-EOF
+		$(echo "$tokens")
+	EOF
+	echo "$tpl_content"
+}
+
+compile_tpls() {
+	rm -rf $app_tmp_path/*
+	tpl_paths=( $(find $app_deploy_path/{base,$1} -type f -name '*.yml') )
+	tpl_names=()
+	for tpl_path in ${tpl_paths[@]}; do
+		tpl_name=$(basename $tpl_path | sed 's/.yml//')
+		tpl_names=(${tpl_names[@]} $tpl_name)
+		tpl_pod_port_name=${tpl_name}_port
+		if [ ! -z ${!tpl_pod_port_name} ]; then
+			tpl_pod_port=:${!tpl_port_name}
+		fi
+		declare "${tpl_name}_host=$tpl_name$tpl_pod_port"
+	done
+	for i in ${!tpl_paths[@]}; do
+		tpl_path=${tpl_paths[$i]}
+		tpl_name=${tpl_names[$i]}
+		tpl_tmp_path=$app_apply_path/${tpl_path#$app_cloud_path}
+		mkdir -p $(dirname $tpl_tmp_path)
+		echo "$(compile_tpl $tpl_path $tpl_name)" >> $tpl_tmp_path
 	done
 }
 
@@ -373,7 +414,7 @@ install)
 uninstall)
 
 	if [ -f $user_agent_path ]; then
-		begin Removing Virtual Machine
+		begin Removing Agent
 		sudo launchctl unload -w $user_agent_path
 		sudo rm $user_agent_path
 	fi
@@ -391,12 +432,12 @@ uninstall)
 	fi
 
 	if [ -d $user_cloud_path ]; then
-		begin Removing Configuration
+		begin Removing Settings
 		rm -rf $user_cloud_path
 	fi
 
 	if [ -d $repo_path ]; then
-		begin Removing Repository
+		begin Removing Cloud
 		sudo rm -rf $repo_path $cloud_path
 	fi
 
@@ -481,14 +522,17 @@ app)
 		if ! app_exists; then
 			begin Generating Cloud Folder
 			cp -r $repo_app_path $app_cloud_path
-			app_id=$(gen_id)
-			echo "app_id=$app_id\n" >> $app_conf_path
 			load_app
 
+			begin Setting Application Name
+			echo "Enter name: \c"
+			read	app_name
+			echo "app_name=$app_name\n" >> $app_base_path
+
 			begin Setting Rails Docker Repository
-			echo "Enter url: \c"
-			read rails_repo_url
-			echo "rails_repo_url=$rails_repo_url\n" >> $app_dev_path
+			echo "Enter repo: \c"
+			read rails_repo
+			echo "rails_repo=$rails_repo:\$app_env\n" >> $app_base_path
 
 			complete
 		else
@@ -499,15 +543,12 @@ app)
 	open)
 
 		load_app
-		open "http://$vm_name:$rails_port"
+		open "http://$vm_name:$rails_cluster_port"
 
 	;;
 	remove)
 
 		load_app
-
-		begin Removing Namespace
-		kubectl delete namespace $app_id
 
 		begin Removing Cloud Folder
 		rm -rf $app_cloud_path
@@ -579,11 +620,10 @@ app)
 	build)
 
 		load_app
-		mkdir -p $app_images_path
 		compile_tpls build
-		app_kubectl delete --ignore-not-found=true -Rf $app_apply_path
+		kubectl delete --ignore-not-found=true -Rf $app_apply_path
 		compile_all build
-		app_kubectl apply -Rf $app_apply_path
+		kubectl apply -Rf $app_apply_path
 		ok
 
 		echo "\nUse \`cloud app log <pod-name>\` to see logs"
@@ -593,13 +633,13 @@ app)
 
 		load_app
 		compile_all deploy
-		app_kubectl apply -Rf $app_apply_path
+		kubectl apply -Rf $app_apply_path
 
 	;;
 	undeploy)
 
 		load_app
-		app_kubectl delete --all deployments
+		kubectl delete --all deployments
 
 	;;
 	console)
@@ -635,10 +675,10 @@ app)
 		load_app
 		case $3 in
 		'')
-			app_kubectl get pods
+			kubectl get pods
 		;;
 		*)
-			app_kubectl describe pod $(find_pod ${3:-$rails_pod})
+			kubectl describe pod $(find_pod ${3:-$rails_pod})
 		;;
 		esac
 
@@ -646,7 +686,7 @@ app)
 	log)
 
 		load_app
-		app_kubectl logs -f $(find_pod ${3:-$rails_pod})
+		kubectl logs -f $(find_pod ${3:-$rails_pod})
 
 	;;
 	help)
