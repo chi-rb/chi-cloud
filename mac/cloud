@@ -169,7 +169,7 @@ kubectl() {
 }
 
 expand_pod_name() {
-	echo $app_name-$1-$app_env
+	echo $app_name-$1-$app_env_name
 }
 
 find_pod() {
@@ -266,16 +266,16 @@ compile_tpl() {
 
 compile_tpls() {
 	rm -rf $app_tmp_path/*
-	tpl_paths=( $(find $app_deploy_path/{base,$1} -type f -name '*.yml') )
-	tpl_names=()
+	tpl_paths=( $(find $app_cloud_path/$1/{base,$app_env_name} -type f -name '*.yml') )
 	for tpl_path in ${tpl_paths[@]}; do
 		tpl_name=$(basename $tpl_path | sed 's/.yml//')
 		tpl_names=(${tpl_names[@]} $tpl_name)
+		tpl_pod_name=$(expand_pod_name $tpl_name)
 		tpl_pod_port_name=${tpl_name}_port
 		if [ ! -z ${!tpl_pod_port_name} ]; then
 			tpl_pod_port=:${!tpl_port_name}
 		fi
-		declare "${tpl_name}_host=$tpl_name$tpl_pod_port"
+		declare "${tpl_name}_host=$tpl_pod_name$tpl_pod_port"
 	done
 	for i in ${!tpl_paths[@]}; do
 		tpl_path=${tpl_paths[$i]}
