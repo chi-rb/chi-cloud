@@ -455,8 +455,8 @@ update)
 
 	begin Updating Repository
 	git -C $repo_path pull
-	git checkout $2
-	
+	git -C $repo_path checkout $2
+
 	complete
 
 ;;
