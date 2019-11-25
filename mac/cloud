@@ -75,6 +75,11 @@ complete() {
 	echo Complete
 }
 
+error() {
+	echo $@ >&2
+	exit 1
+}
+
 begin() {
 	ok
 	if [ "$beginned" = true ]; then
@@ -196,8 +201,7 @@ load_app() {
 
 ensure_app() {
 	if ! app_exists; then
-		echo No cloud folder found
-		exit 1
+		error No cloud folder found
 	fi
 }
 
@@ -212,16 +216,14 @@ app_env_exists() {
 			return 1
 		fi
 	else
-		echo No environment specified
-		exit 1
+		error No environment specified
 	fi
 }
 
 ensure_app_env() {
 	ensure_app
 	if ! app_env_exists $1; then
-		echo Environment $1 not exists
-		exit 1
+		error Environment $1 not exists
 	fi
 }
 
@@ -251,8 +253,7 @@ compile_tpl() {
 			elif [ ! -z ${!token_name} ]; then
 				normalized_token_name=$token_name
 			else
-				echo $token undefined, compiling $1 in $app_env_name
-				exit 1
+				error $token undefined, compiling $1 in $app_env_name
 			fi
 			token_value=$(echo ${!normalized_token_name} | sed 's/\//\\\//g')
 			tpl_content=$(echo "$tpl_content" | sed "s/$token/$token_value/g")
@@ -266,23 +267,30 @@ compile_tpl() {
 
 compile_tpls() {
 	rm -rf $app_tmp_path/*
-	tpl_paths=( $(find $app_cloud_path/$1/{base,$app_env_name} -type f -name '*.yml') )
-	for tpl_path in ${tpl_paths[@]}; do
-		tpl_name=$(basename $tpl_path | sed 's/.yml//')
-		tpl_names=(${tpl_names[@]} $tpl_name)
-		tpl_pod_name=$(expand_pod_name $tpl_name)
-		tpl_pod_port_name=${tpl_name}_port
-		if [ ! -z ${!tpl_pod_port_name} ]; then
-			tpl_pod_port=:${!tpl_port_name}
-		fi
-		declare "${tpl_name}_host=$tpl_pod_name$tpl_pod_port"
-	done
-	for i in ${!tpl_paths[@]}; do
-		tpl_path=${tpl_paths[$i]}
-		tpl_name=${tpl_names[$i]}
-		tpl_tmp_path=$app_apply_path/${tpl_path#$app_cloud_path}
-		mkdir -p $(dirname $tpl_tmp_path)
-		echo "$(compile_tpl $tpl_path $tpl_name)" >> $tpl_tmp_path
+	tpl_root_paths=$app_cloud_path/$1
+	if [ "$1" = deploy ]; then
+		tpl_root_paths="$tpl_root_paths/base $tpl_root_paths/$app_env_name"
+	fi
+	for tpl_root_path in $tpl_root_paths; do
+		tpl_paths=( $(find $tpl_root_path -type f -name '*.yml') )
+		tpl_names=()
+		for tpl_path in ${tpl_paths[@]}; do
+			tpl_name=$(basename $tpl_path | sed 's/.yml//')
+			tpl_names=(${tpl_names[@]} $tpl_name)
+			tpl_pod_name=$(expand_pod_name $tpl_name)
+			tpl_pod_port_name=${tpl_name}_port
+			if [ ! -z ${!tpl_pod_port_name} ]; then
+				tpl_pod_port=:${!tpl_port_name}
+			fi
+			declare "${tpl_name}_host=$tpl_pod_name$tpl_pod_port"
+		done
+		for i in ${!tpl_paths[@]}; do
+			tpl_path=${tpl_paths[$i]}
+			tpl_name=${tpl_names[$i]}
+			tpl_tmp_path=$app_apply_path/${tpl_path#$app_cloud_path}
+			mkdir -p $(dirname $tpl_tmp_path)
+			echo "$(compile_tpl $tpl_path $tpl_name)" >> $tpl_tmp_path
+		done
 	done
 }
 
@@ -564,7 +572,7 @@ app)
 			ensure_app
 			list=$(ls -1 $app_envs_path)
 			if [ -z "$list" ]; then
-				echo No environments found
+				error No environments found
 			else
 				echo "$list"
 			fi
@@ -574,7 +582,7 @@ app)
 
 			ensure_app
 			if app_env_exists $4; then
-				echo Environment $4 already exists
+				error Environment $4 already exists
 			else
 				mkdir -p $app_envs_path
 				touch $app_env_path
