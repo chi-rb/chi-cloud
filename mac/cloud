@@ -174,7 +174,7 @@ kubectl() {
 }
 
 expand_pod_name() {
-	echo $app_name-$1-$app_env_name
+	echo $app_name-$1-$app_env_name | tr _ -
 }
 
 find_pod() {
@@ -228,41 +228,40 @@ ensure_app_env() {
 }
 
 compile_tpl() {
-	tpl_content=$(cat $1)
-	name=$(expand_pod_name $2)
-	tokens=$(grep -o '{{ [a-z_. ]* }}' $1 | uniq)
-	while read token; do
-		token_args=( $(echo $token | sed 's/{{ //' | sed 's/ }}//') )
-		case $token in
+	tpl_output=$(cat $1)
+	name=$3
+	tpl_subs=$(grep -o '{{ [a-z_. ]* }}' $1 | uniq)
+	while read tpl_sub; do
+		tpl_sub_args=( $(echo $tpl_sub | sed 's/{{ //' | sed 's/ }}//') )
+		case $tpl_sub in
 		{{\ render\ *)
-			render_path=${token_args[1]}
-			render_vars=("${token_args[@]:2}")
+			render_path=${tpl_sub_args[1]}
+			render_vars=("${tpl_sub_args[@]:2}")
 			for render_var in $render_vars; do
 				declare $render_var
 			done
-			render_fullpath=$app_snippets_path/${render_path}.yml
-			token_value=$(compile_tpl $render_fullpath $2)
-			token_value=$(echo "$token_value" | sed 's/\//\\\//g' | tr '\n' '\r')
-			tpl_content=$(echo "$tpl_content" | sed "s/$token/$token_value/g" | tr '\r' '\n')
+			render_snippet_path=$app_snippets_path/$render_path.yml
+			tpl_sub_value=$(compile_tpl $render_snippet_path $2 $3 | sed 's/\//\\\//g' | tr '\n' '\r')
+			tpl_output=$(echo "$tpl_output" | sed "s/$tpl_sub/$tpl_sub_value/g" | tr '\r' '\n')
 		;;
 		*)
-			token_name=${token_args[0]}
-			prefixed_token_name=${2}_${token_name}
-			if [ ! -z ${!prefixed_token_name} ]; then
-				normalized_token_name=$prefixed_token_name
-			elif [ ! -z ${!token_name} ]; then
-				normalized_token_name=$token_name
+			tpl_sub_name=${tpl_sub_args[0]}
+			tpl_prefixed_sub_name=${2}_${tpl_sub_name}
+			if [ ! -z ${!tpl_prefixed_sub_name} ]; then
+				tpl_normalized_sub_name=$tpl_prefixed_sub_name
+			elif [ ! -z ${!tpl_sub_name} ]; then
+				tpl_normalized_sub_name=$tpl_sub_name
 			else
-				error $token undefined, compiling $1 in $app_env_name
+				error $tpl_sub undefined, compiling $1 in $app_env_name
 			fi
-			token_value=$(echo ${!normalized_token_name} | sed 's/\//\\\//g')
-			tpl_content=$(echo "$tpl_content" | sed "s/$token/$token_value/g")
+			tpl_sub_value=$(echo ${!tpl_normalized_sub_name} | sed 's/\//\\\//g')
+			tpl_output=$(echo "$tpl_output" | sed "s/$tpl_sub/$tpl_sub_value/g")
 		;;
 		esac
 	done <<-EOF
-		$(echo "$tokens")
+		$(echo "$tpl_subs")
 	EOF
-	echo "$tpl_content"
+	echo "$tpl_output"
 }
 
 compile_tpls() {
@@ -274,10 +273,24 @@ compile_tpls() {
 	for tpl_root_path in $tpl_root_paths; do
 		tpl_paths=( $(find $tpl_root_path -type f -name '*.yml') )
 		tpl_names=()
+		tpl_pod_names=()
 		for tpl_path in ${tpl_paths[@]}; do
-			tpl_name=$(basename $tpl_path | sed 's/.yml//')
+			tpl_name=$(basename $tpl_path)
+			tpl_relative_path=${tpl_path#$tpl_root_path/}
+			if [ $tpl_relative_path = $tpl_name ]; then
+				tpl_name=$(echo $tpl_name | sed 's/.yml//')
+			else
+				tpl_name=$(echo "$tpl_relative_path" | cut -d '/' -f1)
+			fi
+			tpl_name=$(echo $tpl_name | tr - _)
 			tpl_names=(${tpl_names[@]} $tpl_name)
-			tpl_pod_name=$(expand_pod_name $tpl_name)
+			if [ "$1" = build ]; then
+				tpl_suffixed_name=${tpl_name}_build
+			else
+				tpl_suffixed_name=$tpl_name
+			fi
+			tpl_pod_name=$(expand_pod_name $tpl_suffixed_name)
+			tpl_pod_names=(${tpl_pod_names[@]} $tpl_pod_name)
 			tpl_pod_port_name=${tpl_name}_port
 			if [ ! -z ${!tpl_pod_port_name} ]; then
 				tpl_pod_port=:${!tpl_port_name}
@@ -287,9 +300,10 @@ compile_tpls() {
 		for i in ${!tpl_paths[@]}; do
 			tpl_path=${tpl_paths[$i]}
 			tpl_name=${tpl_names[$i]}
+			tpl_pod_name=${tpl_pod_names[$i]}
 			tpl_tmp_path=$app_apply_path/${tpl_path#$app_cloud_path}
 			mkdir -p $(dirname $tpl_tmp_path)
-			echo "$(compile_tpl $tpl_path $tpl_name)" >> $tpl_tmp_path
+			echo "$(compile_tpl $tpl_path $tpl_name $tpl_pod_name)" >> $tpl_tmp_path
 		done
 	done
 }
@@ -630,7 +644,7 @@ app)
 		load_app
 		compile_tpls build
 		kubectl delete --ignore-not-found=true -Rf $app_apply_path
-		compile_all build
+		compile_statics build
 		kubectl apply -Rf $app_apply_path
 		ok
 
