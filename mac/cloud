@@ -136,7 +136,7 @@ authorize() {
 	echo "Enter username: \c"
 	read auth_user
 	echo "Enter password: \c"
-	read auth_pass
+	read -s auth_pass
 }
 
 vm_exists() {
@@ -169,22 +169,26 @@ vm_exec() {
 	fi
 }
 
-kubectl() {
+vm_kubectl() {
 	vm_exec kubectl $@
 }
 
-expand_pod_name() {
-	echo $app_name-$1-$app_env_name | tr _ -
+app_kubectl() {
+	cmd=$@
+	if [ ! -z $app_id ]; then
+		cmd="--namespace $app_id $cmd"
+	fi
+	vm_kubectl $cmd
 }
 
 find_pod() {
-	echo $(kubectl get pod -l "name=$(expand_pod_name $1)" -o jsonpath='{.items[0].metadata.name}')
+	echo $(app_kubectl get pod -l "name=$1" -o jsonpath='{.items[0].metadata.name}')
 }
 
 pod_exec() {
 	name=$1
 	shift
-	kubectl exec -it $(find_pod $name) -- $@
+	app_kubectl exec -it $(find_pod $name) -- $@
 }
 
 app_exists() {
@@ -194,6 +198,7 @@ app_exists() {
 load_app() {
 	app_env_name=${1:-development}
 	app_env=$app_env_name
+	app_id=$app_name-$app_env_name
 	ensure_app_env $app_env_name
 	. $app_base_path
 	. $app_env_path
@@ -289,7 +294,7 @@ compile_tpls() {
 			else
 				tpl_suffixed_name=$tpl_name
 			fi
-			tpl_pod_name=$(expand_pod_name $tpl_suffixed_name)
+			tpl_pod_name=$tpl_suffixed_name
 			tpl_pod_names=(${tpl_pod_names[@]} $tpl_pod_name)
 			tpl_pod_port_name=${tpl_name}_port
 			if [ ! -z ${!tpl_pod_port_name} ]; then
@@ -544,7 +549,6 @@ app)
 		if ! app_exists; then
 			begin Generating Cloud Folder
 			cp -r $repo_app_path $app_cloud_path
-			load_app
 
 			begin Setting Application Name
 			echo "Enter name: \c"
@@ -555,6 +559,10 @@ app)
 			echo "Enter repo: \c"
 			read rails_repo
 			echo "rails_repo=$rails_repo:\$app_env\n" >> $app_base_path
+
+			begin Creating Namespace
+			load_app
+			vm_kubectl create namespace $app_id
 
 			complete
 		else
@@ -571,6 +579,9 @@ app)
 	remove)
 
 		load_app
+
+		begin Removing Namespace
+		vm_kubectl delete namespace $app_id
 
 		begin Removing Cloud Folder
 		rm -rf $app_cloud_path
@@ -643,9 +654,9 @@ app)
 
 		load_app
 		compile_tpls build
-		kubectl delete --ignore-not-found=true -Rf $app_apply_path
+		app_kubectl delete --ignore-not-found=true -Rf $app_apply_path
 		compile_statics build
-		kubectl apply -Rf $app_apply_path
+		app_kubectl apply -Rf $app_apply_path
 		ok
 
 		echo "\nUse \`cloud app log <pod-name>\` to see logs"
@@ -655,13 +666,13 @@ app)
 
 		load_app
 		compile_all deploy
-		kubectl apply -Rf $app_apply_path
+		app_kubectl apply -Rf $app_apply_path
 
 	;;
 	undeploy)
 
 		load_app
-		kubectl delete --all deployments
+		app_kubectl delete --all deployments
 
 	;;
 	console)
@@ -697,10 +708,10 @@ app)
 		load_app
 		case $3 in
 		'')
-			kubectl get pods
+			app_kubectl get pods
 		;;
 		*)
-			kubectl describe pod $(find_pod ${3:-$rails_pod})
+			app_kubectl describe pod $(find_pod ${3:-$rails_pod})
 		;;
 		esac
 
@@ -708,7 +719,7 @@ app)
 	log)
 
 		load_app
-		kubectl logs -f $(find_pod ${3:-$rails_pod})
+		app_kubectl logs -f $(find_pod ${3:-$rails_pod})
 
 	;;
 	help)
