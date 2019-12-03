@@ -394,8 +394,8 @@ install)
 		echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
 		sudo nfsd update
 		vm_ssh sh <<-SSH
-			echo "$mac_ip:$exports_home_path\t$HOME\tnfs defaults\t0 0" | sudo tee -a /etc/fstab
-			mkdir -p $HOME
+			echo "$mac_ip:$exports_home_path\t$HOME\tnfs local_lock=all\t0 0" | sudo tee -a /etc/fstab
+			sudo mkdir -p $HOME
 			sudo mount $HOME
 		SSH
 	fi
