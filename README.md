@@ -10,7 +10,7 @@ I want to provide a standarized way to manage infrastructure, abstracting all mo
 
 Copy and past this inside a terminal:
 ```
-sh <(curl -s https://raw.githubusercontent.com/chi-rb/chi-cloud/0.0.1-alpha2/mac/cloud) install
+sh <(curl -s https://raw.githubusercontent.com/chi-rb/chi-cloud/master/mac/cloud) install
 ```
 
 ## How to uninstall? 
@@ -26,8 +26,10 @@ NOTE: There is a shortcut if you want to resintall `cloud resinstall`
 
 Run this command specifying tag version:
 ```
-cloud update <tag>
+cloud update [tag]
 ```
+
+NOTE: Leaving the tag argument empty will default to master.
 
 ## How to manage apps?
 
@@ -108,7 +110,7 @@ cloud app shell rails
 
 Executes command in a pod, to use the default rails one:
 ```
-cloud app exec bundle update
+cloud app exec --  bundle update
 ```
 
 To specify which pod:
@@ -152,7 +154,14 @@ cloud vm shell
 
 Executes command in the virtual machine:
 ```
-cloud vm exec apt update
+cloud vm exec -- apt update
+```
+
+### Update
+
+Updates virtual machine system:
+```
+cloud vm update
 ```
 
 ## How to check docs?

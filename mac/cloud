@@ -52,6 +52,9 @@ vm_name=cloud
 vm_mem=2G
 vm_cpus=2
 
+k3s_latest_url=https://github.com/rancher/k3s/releases/latest
+k3s_path=/usr/local/bin/k3s
+
 conf_names=(
 	vm_mem
 	vm_cpus
@@ -393,10 +396,10 @@ install)
 		begin Sharing Home Folder
 		echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
 		sudo nfsd update
-		vm_ssh sh <<-SSH
-			echo "$mac_ip:$exports_home_path\t$HOME\tnfs local_lock=all\t0 0" | sudo tee -a /etc/fstab
-			sudo mkdir -p $HOME
-			sudo mount $HOME
+		vm_ssh sudo sh <<-SSH
+			echo "$mac_ip:$exports_home_path\t$HOME\tnfs local_lock=all\t0 0" >> /etc/fstab
+			mkdir -p $HOME
+			mount $HOME
 		SSH
 	fi
 
@@ -469,8 +472,15 @@ reinstall)
 update)
 
 	begin Updating Repository
-	git -C $repo_path pull
-	git -C $repo_path checkout $2
+	current_path=$(pwd)
+	cd $repo_path
+	git pull
+	repo_current_branch=$(git branch | cut -d ' ' -f2)
+	repo_new_branch=${2:-master}
+	if [ $repo_current_branch != $repo_new_branch ]; then
+		git checkout $repo_new_branch
+	fi
+	cd $current_path
 
 	complete
 
@@ -510,6 +520,33 @@ vm)
 		vm_ssh $@
 
 	;;
+	update)
+
+		begin Updating Packages
+		vm_ssh sudo sh <<-SSH
+			apt update
+			apt upgrade -y
+		SSH
+
+		begin Updating K3S
+		k3s_version_regex='v[0-9]\.[0-9]\.[0-9]'
+		k3s_current_version=$(vm_ssh k3s -v | grep -o $k3s_version_regex)
+		k3s_latest_version=$(curl -sD - $k3s_latest_url | grep -o $k3s_version_regex | head -n1)
+		if [ $k3s_current_version != $k3s_latest_version ]; then
+			k3s_url="https://github.com/rancher/k3s/releases/download/$k3s_latest_version/k3s"
+			vm_ssh sudo sh <<-SSH
+				systemctl stop k3s
+				curl -Lo $k3s_path $k3s_url
+				chmod +x $k3s_path
+				systemctl start k3s
+			SSH
+		else
+			echo Already up to date
+		fi
+
+		complete
+
+	;;
 	help)
 
 		cat <<-DOC
@@ -522,6 +559,7 @@ vm)
 			  restart       Stops and starts
 			  shell         Attachs bash session
 			  exec          Executes command
+				update				Updates virtual machine
 			  help          Prints documentation
 		DOC
 
@@ -755,6 +793,7 @@ help)
 		  reinstall     Installs and uninstalls
 		  vm            Manages virtual machine
 		  app           Manages app
+			update				Updates script
 		  help          Prints documentation
 	DOC
 
