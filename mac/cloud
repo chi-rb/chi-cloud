@@ -525,7 +525,7 @@ vm)
 		begin Updating Packages
 		vm_ssh sudo sh <<-SSH
 			apt update
-			apt upgrade -y
+			DEBIAN_FRONTEND=noninteractive apt upgrade -y
 		SSH
 
 		begin Updating K3S
