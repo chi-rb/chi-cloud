@@ -551,7 +551,6 @@ vm)
 
 		cat <<-DOC
 			Usage: cloud vm <commands> [options]
-			Manages virtual machine.
 
 			Available commands:
 			  start         Boots virtual machine
@@ -559,7 +558,7 @@ vm)
 			  restart       Stops and starts
 			  shell         Attachs bash session
 			  exec          Executes command
-				update				Updates virtual machine
+			  update        Updates virtual machine
 			  help          Prints documentation
 		DOC
 
@@ -567,6 +566,8 @@ vm)
 	*)
 
 		unknown
+		echo
+		cloud vm help
 
 	;;
 	esac
@@ -662,7 +663,6 @@ app)
 
 			cat <<-DOC
 				Usage: cloud app envs <commands> [options]
-				Manages app envs.
 
 				Available commands:
 				  list          Lists envs
@@ -676,6 +676,8 @@ app)
 		*)
 
 			unknown
+			echo
+			cloud app envs help
 
 		;;
 		esac
@@ -757,7 +759,6 @@ app)
 
 		cat <<-DOC
 			Usage: cloud app <commands> [options]
-			Manages app.
 
 			Available commands:
 			  envs          Manages environments
@@ -776,6 +777,8 @@ app)
 	*)
 
 		unknown
+		echo
+		cloud app help
 
 	;;
 	esac
@@ -793,7 +796,7 @@ help)
 		  reinstall     Installs and uninstalls
 		  vm            Manages virtual machine
 		  app           Manages app
-			update				Updates script
+		  update        Updates script
 		  help          Prints documentation
 	DOC
 
@@ -801,6 +804,8 @@ help)
 *)
 
 	unknown
+	echo
+	cloud help
 
 ;;
 esac
