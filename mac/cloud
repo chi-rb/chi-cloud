@@ -31,7 +31,6 @@ repo_cloud_path=$repo_mac_path/cloud
 user_cloud_path=$HOME/.cloud
 user_conf_path=$user_cloud_path/conf
 user_auth_path=$user_cloud_path/auth.json
-user_secret_path=$user_cloud_path/secret.yml
 user_disk_path=$user_cloud_path/disk.img
 user_agent_path=$HOME/Library/LaunchAgents/$agent_name
 
@@ -39,6 +38,8 @@ app_path=$PWD
 app_cloud_path=$app_path/cloud
 app_tmp_path=$app_path/tmp/cloud
 app_apply_path=$app_tmp_path/apply
+app_kustomization_path=$app_apply_path/kustomization.yml
+app_secret_path=$app_apply_path/secret.yml
 app_envs_path=$app_cloud_path/envs
 app_base_path=$app_envs_path/base
 app_dev_path=$app_envs_path/development
@@ -305,12 +306,29 @@ compile_tpls() {
 }
 
 compile_statics() {
-	cp $user_secret_path $app_apply_path
+	cat <<-YML > $app_secret_path
+		apiVersion: v1
+		kind: Secret
+		metadata:
+		  name: docker
+		  labels:
+		    name: docker
+		type: kubernetes.io/dockerconfigjson
+		data:
+		  .dockerconfigjson: $(cat $user_auth_path | base64)
+	YML
+	escaped_app_apply_path=$(echo $app_apply_path/ | sed 's/\//\\\//g')
+	resources=$(find $app_apply_path -name '*.yml' | sed "s/$escaped_app_apply_path//g" | sed 's/^/  - /g')
+  cat <<-YML > $app_kustomization_path
+		namespace: $app_id
+		resources:
+		$resources
+	YML
 }
 
 compile_all() {
 	compile_tpls $1
-	compile_statics $1
+	compile_statics
 }
 
 edit() {
@@ -414,17 +432,6 @@ install)
 		  }
 		}
 	JSON
-	cat <<-YML > $user_secret_path
-		apiVersion: v1
-		kind: Secret
-		metadata:
-		  name: docker
-		  labels:
-		    name: docker
-		type: kubernetes.io/dockerconfigjson
-		data:
-		  .dockerconfigjson: $(cat $user_auth_path | base64)
-	YML
 
 	complete
 
@@ -592,10 +599,6 @@ app)
 			read rails_repo
 			echo "rails_repo=$rails_repo:\$app_env\n" >> $app_base_path
 
-			begin Creating Namespace
-			load_app
-			vm_kubectl create namespace $app_id
-
 			complete
 		else
 			echo Already exists
@@ -688,7 +691,7 @@ app)
 		load_app
 		compile_tpls build
 		app_kubectl delete --ignore-not-found=true -Rf $app_apply_path
-		compile_statics build
+		compile_statics
 		app_kubectl apply -Rf $app_apply_path
 		ok
 
@@ -699,7 +702,7 @@ app)
 
 		load_app
 		compile_all deploy
-		app_kubectl apply -Rf $app_apply_path
+		vm_kubectl apply -k $app_apply_path
 
 	;;
 	undeploy)
