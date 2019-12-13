@@ -38,8 +38,9 @@ app_path=$PWD
 app_cloud_path=$app_path/cloud
 app_tmp_path=$app_path/tmp/cloud
 app_apply_path=$app_tmp_path/apply
-app_kustomization_path=$app_apply_path/kustomization.yml
 app_secret_path=$app_apply_path/secret.yml
+app_namespace_path=$app_apply_path/namespace.yml
+app_kustomization_path=$app_apply_path/kustomization.yml
 app_envs_path=$app_cloud_path/envs
 app_base_path=$app_envs_path/base
 app_dev_path=$app_envs_path/development
@@ -316,6 +317,14 @@ compile_statics() {
 		type: kubernetes.io/dockerconfigjson
 		data:
 		  .dockerconfigjson: $(cat $user_auth_path | base64)
+	YML
+	cat <<-YML > $app_namespace_path
+		apiVersion: v1
+		kind: Namespace
+		metadata:
+		  name: $app_id
+		  labels:
+		    name: $app_id
 	YML
 	escaped_app_apply_path=$(echo $app_apply_path/ | sed 's/\//\\\//g')
 	resources=$(find $app_apply_path -name '*.yml' | sed "s/$escaped_app_apply_path//g" | sed 's/^/  - /g')
