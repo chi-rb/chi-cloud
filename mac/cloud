@@ -291,7 +291,7 @@ compile_tpls() {
 			else
 				tpl_suffixed_name=$tpl_name
 			fi
-			tpl_pod_name=$tpl_suffixed_name
+			tpl_pod_name=$(echo $tpl_suffixed_name | tr _ -)
 			tpl_pod_names=(${tpl_pod_names[@]} $tpl_pod_name)
 			declare "${tpl_name}_host=$tpl_pod_name"
 		done
@@ -698,10 +698,13 @@ app)
 	build)
 
 		load_app
+		build_names=$(app_kubectl get pods --no-headers=true | awk '/-build/{ORS=" "; print $1}')
+		if [ ! -z $build_names ]; then
+			app_kubectl delete pods $build_names
+		fi
 		compile_tpls build
-		app_kubectl delete --ignore-not-found=true -Rf $app_apply_path
 		compile_statics
-		app_kubectl apply -Rf $app_apply_path
+		vm_kubectl apply -k $app_apply_path
 		ok
 
 		echo "\nUse \`cloud app log <pod-name>\` to see logs"
