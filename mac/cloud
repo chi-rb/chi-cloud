@@ -620,7 +620,7 @@ app)
 		open "http://$vm_name:$rails_cluster_port"
 
 	;;
-	remove)
+	destroy)
 
 		load_app
 
@@ -776,6 +776,8 @@ app)
 			Usage: cloud app <commands> [options]
 
 			Available commands:
+			  init          Initializes app
+			  destroy       Destroys app
 			  envs          Manages environments
 			  build         Builds docker images
 			  deploy        Applies one or all deploy ymls
