@@ -173,7 +173,7 @@ vm_kubectl() {
 app_kubectl() {
 	cmd=$@
 	if [ ! -z $app_id ]; then
-		cmd="--namespace $app_id $cmd"
+		cmd="-n $app_id $cmd"
 	fi
 	vm_kubectl $cmd
 }
@@ -208,7 +208,7 @@ ensure_app() {
 }
 
 unknown() {
-	echo Unknown command
+	echo Unknown command \`$1\`
 }
 
 app_env_exists() {
@@ -581,7 +581,7 @@ vm)
 	;;
 	*)
 
-		unknown
+		unknown $2
 		echo
 		cloud vm help
 
@@ -687,7 +687,7 @@ app)
 		;;
 		*)
 
-			unknown
+			unknown $3
 			echo
 			cloud app envs help
 
@@ -723,6 +723,12 @@ app)
 		app_kubectl delete --all deployments
 
 	;;
+	restart)
+
+		load_app
+		app_kubectl delete pod $(find_pod ${3:-$rails_pod})
+
+	;;
 	console)
 
 		load_app
@@ -733,6 +739,12 @@ app)
 
 		load_app
 		pod_exec ${3:-$rails_pod} /bin/bash
+
+	;;
+	attach)
+
+		load_app
+		app_kubectl attach -it $(find_pod ${3:-$rails_pod})
 
 	;;
 	exec)
@@ -793,7 +805,7 @@ app)
 	;;
 	*)
 
-		unknown
+		unknown $2
 		echo
 		cloud app help
 
@@ -820,7 +832,7 @@ help)
 ;;
 *)
 
-	unknown
+	unknown $1
 	echo
 	cloud help
 
