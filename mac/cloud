@@ -747,6 +747,13 @@ app)
 		app_kubectl attach -it $(find_pod ${3:-$rails_pod})
 
 	;;
+	tunnel)
+
+		load_app
+		port=$(app_kubectl get service $3 --no-headers=true | awk '{ print $5 }' | sed 's/\/.*//')
+		app_kubectl port-forward $(find_pod $3) $port:$port
+
+	;;
 	exec)
 
 		load_app
