@@ -51,8 +51,8 @@ app_snippets_path=$app_deploy_path/snippets
 
 vm_user=hacker
 vm_name=cloud
-vm_mem=2G
-vm_cpus=2
+vm_mem=4G
+vm_cpus=4
 
 k3s_latest_url=https://github.com/rancher/k3s/releases/latest
 k3s_path=/usr/local/bin/k3s
