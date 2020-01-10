@@ -263,7 +263,7 @@ compile_tpl() {
 	done <<-EOF
 		$(echo "$tpl_subs")
 	EOF
-	echo "$tpl_output"
+	echo "$tpl_output" | sed '/^$/d'
 }
 
 compile_tpls() {
