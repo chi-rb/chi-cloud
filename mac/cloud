@@ -244,7 +244,7 @@ compile_tpl() {
 			done
 			render_snippet_path=$app_snippets_path/$render_path.yml
 			tpl_sub_value=$(compile_tpl $render_snippet_path $2 $3 | sed 's/\//\\\//g' | tr '\n' '\r')
-			tpl_output=$(echo "$tpl_output" | sed "s/$tpl_sub/$tpl_sub_value/g" | tr '\r' '\n')
+			tpl_output=$(echo "$tpl_output" | sed "s/$tpl_sub/$tpl_sub_value/g" | tr '\r' '\n' | sed '/^$/d')
 		;;
 		*)
 			tpl_sub_name=${tpl_sub_args[0]}
@@ -263,7 +263,7 @@ compile_tpl() {
 	done <<-EOF
 		$(echo "$tpl_subs")
 	EOF
-	echo "$tpl_output" | sed '/^$/d'
+	echo "$tpl_output"
 }
 
 compile_tpls() {
