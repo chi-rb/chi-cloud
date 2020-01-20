@@ -20,6 +20,7 @@ s3_disk_url=$s3_url/disk.img.xz
 repo_path=/usr/local/cloud
 repo_tmp_path=/tmp/chi-cloud
 repo_app_path=$repo_path/app
+repo_app_cloud_path=$repo_app_path/cloud
 repo_vm_path=$repo_path/vm
 repo_initrd_path=$repo_vm_path/initrd
 repo_vmlinuz_path=$repo_vm_path/vmlinuz
@@ -35,6 +36,13 @@ user_disk_path=$user_cloud_path/disk.img
 user_agent_path=$HOME/Library/LaunchAgents/$agent_name
 
 app_path=$PWD
+if ([ $1 = init ] || [ $1 = destroy ]) && [ ! -z $2 ]; then
+	if [ ${2:0:1} = / ]; then
+		app_path=$2
+	else
+		app_path=$app_path/$2
+	fi
+fi
 app_cloud_path=$app_path/cloud
 app_tmp_path=$app_path/tmp/cloud
 app_apply_path=$app_tmp_path/apply
@@ -188,7 +196,7 @@ pod_exec() {
 	app_kubectl exec -it $(find_pod $name) -- $@
 }
 
-app_exists() {
+app_cloud_exists() {
 	test -d $app_cloud_path
 }
 
@@ -202,7 +210,7 @@ load_app() {
 }
 
 ensure_app() {
-	if ! app_exists; then
+	if ! app_cloud_exists; then
 		error No cloud folder found
 	fi
 }
@@ -420,7 +428,7 @@ install)
 	fi
 
 	if ! export_exists; then
-		begin Sharing Home Folder
+		begin Sharing Home Directory
 		echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
 		sudo nfsd update
 		vm_ssh sudo sh <<-SSH
@@ -459,7 +467,7 @@ uninstall)
 	fi
 
 	if export_exists; then
-		begin Unsharing Home Folder
+		begin Unsharing Home Directroy
 		escaped_exports_home_path=$(echo $exports_home_path | sed 's/\//\\\//g')
 		sudo sed -i '' "/$escaped_exports_home_path/d" $exports_path
 		sudo nfsd update
@@ -499,6 +507,220 @@ update)
 	cd $current_path
 
 	complete
+
+;;
+init)
+
+	if ! app_cloud_exists; then
+		mkdir -p $app_path
+		if [ ! $(ls -A $app_path) ]; then
+			begin Generating App Directory
+			cp -r $repo_app_path/* $app_path
+			git init $app_path
+		else
+			begin Generating Cloud Directory
+			cp -r $repo_app_cloud_path $app_cloud_path
+		fi
+
+		begin Setting Application
+		echo "Enter name: \c"
+		read	app_name
+		echo "app_name=$app_name" >> $app_base_path
+		echo "Enter port: \c"
+		read	rails_cluster_port
+		echo "rails_cluster_port=$rails_cluster_port" >> $app_dev_path
+
+		begin Setting Docker Repository
+		echo "Enter rails repo: \c"
+		read rails_repo
+		echo "rails_repo=$rails_repo:\$app_env" >> $app_base_path
+
+		complete
+	else
+		echo Already initialized
+	fi
+
+;;
+open)
+
+	load_app
+	open "http://$vm_name:$rails_cluster_port"
+
+;;
+destroy)
+
+	load_app
+
+	begin Removing Namespace
+	vm_kubectl delete namespace $app_id
+
+	begin Removing Cloud Directory
+	rm -rf $app_cloud_path
+
+	complete
+
+;;
+envs)
+
+	case $2 in
+	''|list)
+
+		ensure_app
+		list=$(ls -1 $app_envs_path)
+		if [ -z "$list" ]; then
+			error No environments found
+		else
+			echo "$list"
+		fi
+
+	;;
+	add)
+
+		ensure_app
+		if app_env_exists $3; then
+			error Environment $3 already exists
+		else
+			mkdir -p $app_envs_path
+			touch $app_env_path
+			cloud envs edit $3
+		fi
+
+	;;
+	edit)
+
+		ensure_app_env $3
+		edit $app_env_path
+
+	;;
+	remove)
+
+		ensure_app_env $3
+		rm -f $app_env_path
+
+	;;
+	help)
+
+		cat <<-DOC
+			Usage: cloud envs <command> [options]
+
+			Available commands:
+			  list          Lists envs
+			  add           Adds env
+			  edit          Edits env
+			  remove        Removes env
+			  help          Prints documentation
+		DOC
+
+	;;
+	*)
+
+		unknown $2
+		echo
+		cloud envs help
+
+	;;
+	esac
+
+;;
+build)
+
+	load_app
+	build_names=$(app_kubectl get pods --no-headers=true | awk '/-build/{ORS=" "; print $1}')
+	if [ ! -z $build_names ]; then
+		app_kubectl delete pods $build_names
+	fi
+	compile_tpls build
+	compile_statics
+	vm_kubectl apply -k $app_apply_path
+	ok
+
+	echo "\nUse \`cloud log <pod-name>\` to see logs"
+
+;;
+deploy)
+
+	load_app
+	compile_all deploy
+	vm_kubectl apply -k $app_apply_path
+
+;;
+undeploy)
+
+	load_app
+	app_kubectl delete --all deployments
+
+;;
+restart)
+
+	load_app
+	app_kubectl delete pod $(find_pod ${2:-$rails_pod})
+
+;;
+console)
+
+	load_app
+	pod_exec $rails_pod bin/rails c
+
+;;
+rails)
+
+	load_app
+	shift 1
+	pod_exec ${2:-$rails_pod} bin/rails $@
+
+;;
+shell)
+
+	load_app
+	pod_exec ${2:-$rails_pod} /bin/bash
+
+;;
+attach)
+
+	load_app
+	app_kubectl attach -it $(find_pod ${2:-$rails_pod})
+
+;;
+tunnel)
+
+	load_app
+	port=$(app_kubectl get service $2 --no-headers=true | awk '{ print $5 }' | sed 's/\/.*//')
+	app_kubectl port-forward $(find_pod $2) $port:$port
+
+;;
+exec)
+
+	load_app
+	shift
+	if [ $# -gt 2 ] && [ "$2" = -- ]; then
+		name=$1
+		shift 2
+	elif [ $# -gt 1 ] && [ "$1" = -- ]; then
+		name=$rails_pod
+		shift
+	else
+		error Wrong format
+	fi
+	pod_exec $name $@
+
+;;
+status)
+
+	load_app
+	case $2 in
+	'')
+		app_kubectl get pods
+	;;
+	*)
+		app_kubectl describe pod $(find_pod ${2:-$rails_pod})
+	;;
+	esac
+
+;;
+log)
+
+	load_app
+	app_kubectl logs -f $(find_pod ${2:-$rails_pod})
 
 ;;
 vm)
@@ -566,15 +788,15 @@ vm)
 	help)
 
 		cat <<-DOC
-			Usage: cloud vm <commands> [options]
+			Usage: cloud vm <command> [options]
 
 			Available commands:
 			  start         Boots virtual machine
 			  stop          Halts virtual machine
 			  restart       Stops and starts
-			  shell         Attachs bash session
+			  shell         Opens bash shell
 			  exec          Executes command
-			  update        Updates virtual machine
+			  update        Updates operating system
 			  help          Prints documentation
 		DOC
 
@@ -589,250 +811,34 @@ vm)
 	esac
 
 ;;
-app)
-
-	case $2 in
-	init)
-
-		if ! app_exists; then
-			begin Generating Cloud Folder
-			cp -r $repo_app_path $app_cloud_path
-
-			begin Setting Application Name
-			echo "Enter name: \c"
-			read	app_name
-			echo "app_name=$app_name\n" >> $app_base_path
-
-			begin Setting Rails Docker Repository
-			echo "Enter repo: \c"
-			read rails_repo
-			echo "rails_repo=$rails_repo:\$app_env\n" >> $app_base_path
-
-			complete
-		else
-			echo Already exists
-		fi
-
-	;;
-	open)
-
-		load_app
-		open "http://$vm_name:$rails_cluster_port"
-
-	;;
-	destroy)
-
-		load_app
-
-		begin Removing Namespace
-		vm_kubectl delete namespace $app_id
-
-		begin Removing Cloud Folder
-		rm -rf $app_cloud_path
-
-		complete
-
-	;;
-	envs)
-
-		case $3 in
-		''|list)
-
-			ensure_app
-			list=$(ls -1 $app_envs_path)
-			if [ -z "$list" ]; then
-				error No environments found
-			else
-				echo "$list"
-			fi
-
-		;;
-		add)
-
-			ensure_app
-			if app_env_exists $4; then
-				error Environment $4 already exists
-			else
-				mkdir -p $app_envs_path
-				touch $app_env_path
-				cloud app envs edit $4
-			fi
-
-		;;
-		edit)
-
-			ensure_app_env $4
-			edit $app_env_path
-
-		;;
-		remove)
-
-			ensure_app_env $4
-			rm -f $app_env_path
-
-		;;
-		help)
-
-			cat <<-DOC
-				Usage: cloud app envs <commands> [options]
-
-				Available commands:
-				  list          Lists envs
-				  add           Adds env
-				  edit          Edits env
-				  remove        Removes env
-				  help          Prints documentation
-			DOC
-
-		;;
-		*)
-
-			unknown $3
-			echo
-			cloud app envs help
-
-		;;
-		esac
-
-	;;
-	build)
-
-		load_app
-		build_names=$(app_kubectl get pods --no-headers=true | awk '/-build/{ORS=" "; print $1}')
-		if [ ! -z $build_names ]; then
-			app_kubectl delete pods $build_names
-		fi
-		compile_tpls build
-		compile_statics
-		vm_kubectl apply -k $app_apply_path
-		ok
-
-		echo "\nUse \`cloud app log <pod-name>\` to see logs"
-
-	;;
-	deploy)
-
-		load_app
-		compile_all deploy
-		vm_kubectl apply -k $app_apply_path
-
-	;;
-	undeploy)
-
-		load_app
-		app_kubectl delete --all deployments
-
-	;;
-	restart)
-
-		load_app
-		app_kubectl delete pod $(find_pod ${3:-$rails_pod})
-
-	;;
-	console)
-
-		load_app
-		pod_exec $rails_pod bin/rails c
-
-	;;
-	shell)
-
-		load_app
-		pod_exec ${3:-$rails_pod} /bin/bash
-
-	;;
-	attach)
-
-		load_app
-		app_kubectl attach -it $(find_pod ${3:-$rails_pod})
-
-	;;
-	tunnel)
-
-		load_app
-		port=$(app_kubectl get service $3 --no-headers=true | awk '{ print $5 }' | sed 's/\/.*//')
-		app_kubectl port-forward $(find_pod $3) $port:$port
-
-	;;
-	exec)
-
-		load_app
-		shift 2
-		if [ $# -gt 1 ] && [ "$1" = -- ]; then
-			name=$rails_pod
-			shift
-		elif [ $# -gt 2 ] && [ "$2" = -- ]; then
-			name=$1
-			shift 2
-		else
-			error Wrong format
-		fi
-		pod_exec $name $@
-
-	;;
-	status)
-
-		load_app
-		case $3 in
-		'')
-			app_kubectl get pods
-		;;
-		*)
-			app_kubectl describe pod $(find_pod ${3:-$rails_pod})
-		;;
-		esac
-
-	;;
-	log)
-
-		load_app
-		app_kubectl logs -f $(find_pod ${3:-$rails_pod})
-
-	;;
-	help)
-
-		cat <<-DOC
-			Usage: cloud app <commands> [options]
-
-			Available commands:
-			  init          Initializes app
-			  destroy       Destroys app
-			  envs          Manages environments
-			  build         Builds docker images
-			  deploy        Applies one or all deploy ymls
-			  undeploy      Unapplies one or all deploy ymls
-			  console       Attachs rails console
-			  shell         Attachs bash session in pod (rails pod by default)
-			  exec          Executes command in pod
-			  status        Lists or describes pods (lists pods by default)
-			  log           Tails pod logs (rails pod by default)
-			  help          Prints documentation
-		DOC
-
-	;;
-	*)
-
-		unknown $2
-		echo
-		cloud app help
-
-	;;
-	esac
-
-;;
 help)
 
 	cat <<-DOC
-		Usage: cloud <commands> [options]
+		Usage: cloud <command> [options]
 		Orchestrates Rails+Kubernetes Clouds.
 
 		Available commands:
-		  install       Setups cloud
-		  uninstall     Unsetups cloud
+		  install       Setups script
+		  uninstall     Unsetups script
 		  reinstall     Installs and uninstalls
+		  update [tag]  Updates script
+		  init [path]   Generates folder and initializes cloud
+		  destroy       Removes cloud folder and destroy cloud
+		  build         Builds docker images
+		  deploy        Deploys app into the cloud
+		  undeploy      Undeploys app from the cloud
+		  status [pod]  Prints status of pods (all by default)
+		  restart [pod] Restart pod (rails by default)
+		  shell [pod]   Opens bash shell in pod (rails by default)
+		  attach [pod]  Attachs into first process of pod (rails by default)
+		  tunnel pod    Creates temporary tunnel into pod
+		  exec [pod]    Executes shell command in pod (rails by default)
+		  console       Attachs to rails console
+		  rails         Executes rails command
+		  open          Opens browser pointing to app
+		  log [pod]     Tails pod log (rails by default)
+		  envs          Manages environments
 		  vm            Manages virtual machine
-		  app           Manages app
-		  update        Updates script
 		  help          Prints documentation
 	DOC
 

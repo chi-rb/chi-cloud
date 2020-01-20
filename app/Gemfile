@@ -1,0 +1,22 @@
+source 'https://rubygems.org'
+
+gem 'rails', '~> 5.2'
+gem 'bootsnap', require: false
+gem 'pg'
+gem 'sass-rails'
+gem 'uglifier'
+gem 'turbolinks'
+gem 'bcrypt'
+gem 'puma'
+gem 'autoprefixer-rails'
+gem 'slim'
+
+group :development,:test do
+  gem 'byebug'
+  gem 'spring'
+end
+
+group :test do
+  gem 'capybara'
+  gem 'selenium-webdriver'
+end 

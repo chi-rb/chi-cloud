@@ -1,0 +1,7 @@
+        volumeMounts:
+        - mountPath: /rails
+          name: rails
+      volumes:
+      - name: rails
+        hostPath:
+          path: {{ app_path }}

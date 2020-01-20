@@ -1,6 +1,0 @@
-#!/bin/sh
-apt update
-apt install -y mariadb-client
-echo 'gem: --no-document' > /etc/gemrc
-gem update --system
-gem install bundler

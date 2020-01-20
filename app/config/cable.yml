@@ -1,0 +1,14 @@
+default: &default
+  adapter: redis
+
+production:
+  <<: *default
+  url: redis://localhost:6379/1
+
+development:
+  <<: *default
+  url: <%= ENV['REDIS_URL'] %>/1
+
+test:
+  <<: *default
+  url: <%= ENV['REDIS_HOST'] %>/2

@@ -4,11 +4,11 @@ Orchestrates Rails+Kubernetes Clouds.
 
 ## Why?
 
-I want to provide a standarized way to manage infrastructure, abstracting all moving parts in a way that you only need to know this api to work.
+I want a standarized way to manage infrastructure that will only require to know one api.
 
 ## How to install?
 
-Copy and past this inside a terminal:
+Run this command:
 ```
 sh <(curl -s https://raw.githubusercontent.com/chi-rb/chi-cloud/master/mac/cloud) install
 ```
@@ -24,142 +24,206 @@ NOTE: There is a shortcut if you want to resintall `cloud resinstall`
 
 ## How to update?
 
-Run this command specifying tag version:
+To update to the latest commit on master:
 ```
-cloud update [tag]
-```
-
-NOTE: Leaving the tag argument empty will default to master.
-
-## How to manage apps?
-
-All commands for the are prefixed with `cloud app` and are desgined to be executed inside the application path.
-
-### Init
-
-Generates the cloud folder skeleton and share the app into the cloud:
-```
-cloud app init
+cloud update
 ```
 
-### Remove
-
-Removes the cloud folder and unshares the app from the cloud:
+Or to a specific tag:
 ```
-cloud app remove
+cloud update v1.4.0
+```
+
+### How to initialize a cloud?
+
+To initialize a cloud:
+```
+cloud init
+```
+
+Or the same specifying a path:
+```
+cloud init awesome/app
+```
+
+NOTE: Will generate a rails app if path is empty, otherwise just the `cloud` folder.
+
+## How to manage a cloud?
+
+All the following commands are designed to be executed from the root path of an already initialized cloud.
+
+### Destroy
+
+Removes cloud folder and destroys cloud:
+```
+cloud destroy
 ```
 
 ### Build
 
-Builds the images needed by the deploy commadn:
+Builds docker images:
 ```
-cloud app build
+cloud build
 ```
 
 ### Deploy
 
-Deploys the app into the cloud:
+Deploys app into the cloud:
 ```
-cloud app deploy
+cloud deploy
 ```
 
 ### Undeploy
 
-Undeploys the app from the cloud:
+Undeploys app from the cloud:
 ```
-cloud app undeploy
+cloud undeploy
 ```
 
 ### Status
 
-By default prints the status of all pods:
+Prints status of all pods:
 ```
-cloud app status
-```
-
-To get a verbose output of a specific pod:
-```
-cloud app status rails
+cloud status
 ```
 
-### Log
-
-Tails the log of a pod, to use the default rails one:
+Or a verbose description of a specific pod:
 ```
-cloud app log
+cloud status rails
 ```
 
-To specify which pod:
+### Restart
+
+Restarts rails pod:
 ```
-cloud app log rails
+cloud restart
+```
+
+Or any other:
+```
+cloud restart chrome
 ```
 
 ### Shell
 
-Opens a bash shell in a pod, to use the default rails one:
+Opens bash shell in rails pod:
 ```
-cloud app shell
+cloud shell
 ```
 
-To specify which pod:
+Or any other:
 ```
-cloud app shell rails
+cloud shell rails
 ```
+
+### Attach
+
+Attachs into first process of rails pod:
+```
+cloud attach 
+```
+
+Or any other:
+```
+cloud attach rails
+```
+
+### Tunnel
+
+Creates temporary tunnel into pod:
+```
+cloud tunnel mysql
+```
+
+NOTE: To connect you need to ssh into hacker@cloud.
 
 ### Exec
 
-Executes command in a pod, to use the default rails one:
+Executes command in rails pod:
 ```
-cloud app exec --  bundle update
+cloud exec -- bundle update
 ```
 
-To specify which pod:
+Or any other:
 ```
-cloud app exec rails -- bundle update
+cloud exec rails -- bundle update
+```
+
+### Console
+
+Attachs to rails console:
+```
+cloud console
+```
+
+### Rails
+
+Executes rails command:
+```
+cloud rails db:migrate
+```
+
+### Open
+
+Opens browser pointing to app:
+```
+cloud open
+```
+
+### Log
+
+Tails log of rails pod:
+```
+cloud log
+```
+
+Or any ohter:
+```
+cloud log rails
 ```
 
 ## How to manage the vm?
 
-All commands related to the virtual machine are prefixed with `cloud vm`.
+All commands related to the virtual machine are prefixed with `vm`.
 
 ### Start
 
-Starts the virtual machine using:
+Boots virtual machine:
 ```
 cloud vm start
 ```
 
 ### Stop
 
-Stops the virtual machine:
+Halts virtual machine:
 ```
 cloud vm stop
 ```
 
 ### Restart
 
-Restarts the virtual machine:
+Stops and starts:
 ```
 cloud vm restart
 ```
 
 ### Shell
 
-Opens a bash shell in the virtual machine:
+Opens bash shell:
 ```
 cloud vm shell
 ```
 
 ### Exec
 
-Executes command in the virtual machine:
+Executes command:
 ```
 cloud vm exec -- apt update
 ```
 
 ### Update
 
-Updates virtual machine system:
+Updates operating system:
 ```
 cloud vm update
 ```
@@ -168,14 +232,14 @@ cloud vm update
 
 Print documentation using:
 ```
-cloud [app|vm] help
+cloud help
 ```
 
 ## Knonwn issues
 
 ### macOS Catalina
 
-New security measures has been added into Catalina, so you need to manually add `/sbin/nfsd` and `/usr/local/cloud/mac/xhyve` into `System Preferences > Security & Privacy > Privacy > Full Disk Access`.
+New security measures has been added into Catalina, so you need to manually add `/sbin/nfsd` and `/usr/local/cloud/mac/xhyve` into `System Preferences > Security & Privacy > Privacy > Full Disk Access.
 
 ## Credits
 
