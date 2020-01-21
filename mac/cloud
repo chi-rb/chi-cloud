@@ -686,7 +686,7 @@ rails)
 
 	load_app
 	shift 1
-	pod_exec ${2:-$rails_pod} bin/rails $@
+	pod_exec $rails_pod bin/rails $@
 
 ;;
 shell)
