@@ -553,7 +553,7 @@ init)
 
 		complete
 
-		if [ $note ]; then
+		if [ $note = true ]; then
 			echo "\nNOTE: You might need to tweak a few files, try using tmp/cloud/samples as a guideline"
 		fi
 	else
