@@ -56,6 +56,14 @@ app_prod_path=$app_envs_path/production
 app_build_path=$app_cloud_path/build
 app_deploy_path=$app_cloud_path/deploy
 app_snippets_path=$app_deploy_path/snippets
+app_samples_path=$app_tmp_path/samples
+app_sample_paths=(
+	config/puma.rb
+	config/database.yml
+	config/cable.yml
+	test/test_helper.rb
+	test/application_system_test_case.rb
+)
 
 vm_user=hacker
 vm_name=cloud
@@ -513,13 +521,21 @@ init)
 
 	if ! app_cloud_exists; then
 		mkdir -p $app_path
-		if [ ! $(ls -A $app_path) ]; then
+		if [ ! "$(ls -A $app_path)" ]; then
 			begin Generating App Directory
 			cp -r $repo_app_path/* $app_path
 			git init $app_path
+			note=false
 		else
 			begin Generating Cloud Directory
 			cp -r $repo_app_cloud_path $app_cloud_path
+			mkdir -p $app_samples_path
+			for sample_path in "${app_sample_paths[@]}"; do
+				destination_path=$app_samples_path/$sample_path
+				mkdir -p $(dirname $destination_path)
+				cp $repo_app_path/$sample_path $destination_path
+			done
+			note=true
 		fi
 
 		begin Setting Application
@@ -536,6 +552,10 @@ init)
 		echo "rails_repo=$rails_repo:\$app_env" >> $app_base_path
 
 		complete
+
+		if [ $note ]; then
+			echo "\nNOTE: You might need to tweak a few files, try using tmp/cloud/samples as a guideline"
+		fi
 	else
 		echo Already initialized
 	fi
