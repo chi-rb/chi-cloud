@@ -113,7 +113,7 @@ cloud shell
 
 Or any other:
 ```
-cloud shell rails
+cloud shell hub
 ```
 
 ### Attach
@@ -125,7 +125,7 @@ cloud attach
 
 Or any other:
 ```
-cloud attach rails
+cloud attach chrome
 ```
 
 ### Tunnel
@@ -146,7 +146,7 @@ cloud exec -- bundle update
 
 Or any other:
 ```
-cloud exec rails -- bundle update
+cloud exec mysql -- mysqldump
 ```
 
 ### Console
@@ -179,7 +179,7 @@ cloud log
 
 Or any ohter:
 ```
-cloud log rails
+cloud log redis
 ```
 
 ## How to manage the vm?
