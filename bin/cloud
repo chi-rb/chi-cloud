@@ -794,10 +794,10 @@ vm)
 		SSH
 
 		begin Updating K3S
-		k3s_version_regex='v[0-9]\.[0-9]\.[0-9]'
-		k3s_current_version=$(vm_ssh k3s -v | grep -o $k3s_version_regex)
-		k3s_latest_version=$(curl -sD - $k3s_latest_url | grep -o $k3s_version_regex | head -n1)
-		if [ $k3s_current_version != $k3s_latest_version ]; then
+		k3s_version_regex='v[0-9]+\.[0-9]+\.[0-9]+\+k3s.?[0-9]+'
+		k3s_current_version=$(vm_ssh k3s -v | grep -oE $k3s_version_regex)
+		k3s_latest_version=$(curl -s $k3s_latest_url | grep -oE $k3s_version_regex | head -n1)
+		if [ -z $k3s_current_version ] || [ $k3s_current_version != $k3s_latest_version ]; then
 			k3s_url="https://github.com/rancher/k3s/releases/download/$k3s_latest_version/k3s"
 			vm_ssh sudo sh <<-SSH
 				systemctl stop k3s
