@@ -656,8 +656,7 @@ build)
 	if [ ! -z $build_names ]; then
 		app_kubectl delete pods $build_names
 	fi
-	compile_tpls build
-	compile_statics
+	compile_all build
 	vm_kubectl apply -k \"$app_apply_path\"
 	ok
 
