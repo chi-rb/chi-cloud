@@ -539,7 +539,7 @@ init)
 			mkdir -p "$app_samples_path"
 			for sample_path in "${app_sample_paths[@]}"; do
 				destination_path=$app_samples_path/$sample_path
-				mkdir -p $(dirname "$destination_path")
+				mkdir -p "$(dirname "$destination_path")"
 				cp $repo_app_path/$sample_path "$destination_path"
 			done
 			note=true
