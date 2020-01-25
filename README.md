@@ -1,6 +1,6 @@
 # Cloud
 
-Orchestrates Rails+Kubernetes Clouds.
+Orchestrates Rails+Kubernetes Clouds in macOS.
 
 ## Why?
 
@@ -10,7 +10,7 @@ I want a standarized way to manage infrastructure that will only require to know
 
 Run this command:
 ```
-sh <(curl -s https://raw.githubusercontent.com/chi-rb/chi-cloud/master/mac/cloud) install
+sh <(curl -s https://raw.githubusercontent.com/chi-rb/chi-cloud/master/bin/cloud) install
 ```
 
 ## How to uninstall? 
