@@ -25,9 +25,9 @@ repo_vm_path=$repo_path/vm
 repo_initrd_path=$repo_vm_path/initrd
 repo_vmlinuz_path=$repo_vm_path/vmlinuz
 repo_disk_path=$repo_vm_path/disk.img.xz
-repo_mac_path=$repo_path/mac
-repo_xhyve_path=$repo_mac_path/xhyve
-repo_cloud_path=$repo_mac_path/cloud
+repo_bin_path=$repo_path/bin
+repo_xhyve_path=$repo_bin_path/xhyve
+repo_cloud_path=$repo_bin_path/cloud
 
 user_cloud_path=$HOME/.cloud
 user_conf_path=$user_cloud_path/conf
@@ -35,13 +35,10 @@ user_auth_path=$user_cloud_path/auth.json
 user_disk_path=$user_cloud_path/disk.img
 user_agent_path=$HOME/Library/LaunchAgents/$agent_name
 
-app_path=$PWD
 if ([ $1 = init ] || [ $1 = destroy ]) && [ ! -z $2 ]; then
-	if [ ${2:0:1} = / ]; then
-		app_path=$2
-	else
-		app_path=$app_path/$2
-	fi
+	app_path=$(cd $2; pwd)
+else
+	app_path=$PWD
 fi
 app_cloud_path=$app_path/cloud
 app_tmp_path=$app_path/tmp/cloud
@@ -205,15 +202,15 @@ pod_exec() {
 }
 
 app_cloud_exists() {
-	test -d $app_cloud_path
+	test -d "$app_cloud_path"
 }
 
 load_app() {
 	app_env_name=${1:-development}
 	app_env=$app_env_name
 	ensure_app_env $app_env_name
-	. $app_base_path
-	. $app_env_path
+	. "$app_base_path"
+	. "$app_env_path"
 	app_id=$app_name-$app_env_name
 }
 
@@ -230,7 +227,7 @@ unknown() {
 app_env_exists() {
 	if [ ! -z $1 ]; then
 		app_env_path=$app_envs_path/$1
-		if [ ! -f $app_env_path ]; then
+		if [ ! -f "$app_env_path" ]; then
 			return 1
 		fi
 	else
@@ -246,9 +243,9 @@ ensure_app_env() {
 }
 
 compile_tpl() {
-	tpl_output=$(cat $1)
+	tpl_output=$(cat "$1")
 	name=$3
-	tpl_subs=$(grep -o '{{ [a-z_. ]* }}' $1 | uniq)
+	tpl_subs=$(grep -o '{{ [a-z_. ]* }}' "$1" | uniq)
 	while read tpl_sub; do
 		tpl_sub_args=( $(echo $tpl_sub | sed 's/{{ //' | sed 's/ }}//') )
 		case $tpl_sub in
@@ -259,15 +256,15 @@ compile_tpl() {
 				declare $render_var
 			done
 			render_snippet_path=$app_snippets_path/$render_path.yml
-			tpl_sub_value=$(compile_tpl $render_snippet_path $2 $3 | sed 's/\//\\\//g' | tr '\n' '\r')
+			tpl_sub_value=$(compile_tpl "$render_snippet_path" $2 $3 | sed 's/\//\\\//g' | tr '\n' '\r')
 			tpl_output=$(echo "$tpl_output" | sed "s/$tpl_sub/$tpl_sub_value/g" | tr '\r' '\n' | sed '/^$/d')
 		;;
 		*)
 			tpl_sub_name=${tpl_sub_args[0]}
 			tpl_prefixed_sub_name=${2}_${tpl_sub_name}
-			if [ ! -z ${!tpl_prefixed_sub_name} ]; then
+			if [ ! -z "${!tpl_prefixed_sub_name}" ]; then
 				tpl_normalized_sub_name=$tpl_prefixed_sub_name
-			elif [ ! -z ${!tpl_sub_name} ]; then
+			elif [ ! -z "${!tpl_sub_name}" ]; then
 				tpl_normalized_sub_name=$tpl_sub_name
 			else
 				error $tpl_sub undefined, compiling $1 in $app_env_name
@@ -283,47 +280,56 @@ compile_tpl() {
 }
 
 compile_tpls() {
-	rm -rf $app_tmp_path/*
-	tpl_root_paths=$app_cloud_path/$1
+	app_target_path=$app_cloud_path/$1
 	if [ "$1" = deploy ]; then
-		tpl_root_paths="$tpl_root_paths/base $tpl_root_paths/$app_env_name"
+		tpl_root_paths=("$app_target_path/base" "$app_target_path/$app_env_name")
+	else
+		tpl_root_paths=("$app_target_path")
 	fi
-	for tpl_root_path in $tpl_root_paths; do
-		tpl_paths=( $(find $tpl_root_path -type f -name '*.yml') )
+	for ri in ${!tpl_root_paths[@]}; do
+		tpl_root_path="${tpl_root_paths[$ri]}"
+		tpl_paths=()
 		tpl_names=()
 		tpl_pod_names=()
-		for tpl_path in ${tpl_paths[@]}; do
-			tpl_name=$(basename $tpl_path)
+		tpl_matches=$(find "$tpl_root_path" -type f -name '*.yml')
+		while read tpl_path; do
+			tpl_paths+=("$tpl_path")
+		done <<-EOF
+			$(echo "$tpl_matches")
+		EOF
+		for ti in ${!tpl_paths[@]}; do
+			tpl_path=${tpl_paths[$ti]}
 			tpl_relative_path=${tpl_path#$tpl_root_path/}
-			if [ $tpl_relative_path = $tpl_name ]; then
+			tpl_name=$(basename "$tpl_path")
+			if [ "$tpl_relative_path" = $tpl_name ]; then
 				tpl_name=$(echo $tpl_name | sed 's/.yml//')
 			else
 				tpl_name=$(echo "$tpl_relative_path" | cut -d '/' -f1)
 			fi
 			tpl_name=$(echo $tpl_name | tr - _)
-			tpl_names=(${tpl_names[@]} $tpl_name)
+			tpl_names+=($tpl_name)
 			if [ "$1" = build ]; then
 				tpl_suffixed_name=${tpl_name}_build
 			else
 				tpl_suffixed_name=$tpl_name
 			fi
 			tpl_pod_name=$(echo $tpl_suffixed_name | tr _ -)
-			tpl_pod_names=(${tpl_pod_names[@]} $tpl_pod_name)
+			tpl_pod_names+=($tpl_pod_name)
 			declare "${tpl_name}_host=$tpl_pod_name"
 		done
-		for i in ${!tpl_paths[@]}; do
-			tpl_path=${tpl_paths[$i]}
-			tpl_name=${tpl_names[$i]}
-			tpl_pod_name=${tpl_pod_names[$i]}
-			tpl_tmp_path=$app_apply_path/${tpl_path#$app_cloud_path}
-			mkdir -p $(dirname $tpl_tmp_path)
-			echo "$(compile_tpl $tpl_path $tpl_name $tpl_pod_name)" >> $tpl_tmp_path
+		for ti in ${!tpl_paths[@]}; do
+			tpl_path=${tpl_paths[$ti]}
+			tpl_name=${tpl_names[$ti]}
+			tpl_pod_name=${tpl_pod_names[$ti]}
+			tpl_tmp_path=$app_apply_path/${tpl_path#$app_cloud_path/}
+			mkdir -p "$(dirname "$tpl_tmp_path")"
+			echo "$(compile_tpl "$tpl_path" $tpl_name $tpl_pod_name)" >> "$tpl_tmp_path"
 		done
 	done
 }
 
 compile_statics() {
-	cat <<-YML > $app_secret_path
+	cat <<-YML > "$app_secret_path"
 		apiVersion: v1
 		kind: Secret
 		metadata:
@@ -334,7 +340,7 @@ compile_statics() {
 		data:
 		  .dockerconfigjson: $(cat $user_auth_path | base64)
 	YML
-	cat <<-YML > $app_namespace_path
+	cat <<-YML > "$app_namespace_path"
 		apiVersion: v1
 		kind: Namespace
 		metadata:
@@ -342,9 +348,9 @@ compile_statics() {
 		  labels:
 		    name: $app_id
 	YML
-	escaped_app_apply_path=$(echo $app_apply_path/ | sed 's/\//\\\//g')
-	resources=$(find $app_apply_path -name '*.yml' | sed "s/$escaped_app_apply_path//g" | sed 's/^/  - /g')
-  cat <<-YML > $app_kustomization_path
+	escaped_app_apply_path=$(echo "$app_apply_path/" | sed 's/\//\\\//g')
+	resources=$(find "$app_apply_path" -name '*.yml' | sed "s/$escaped_app_apply_path//g" | sed 's/^/  - /g')
+  cat <<-YML > "$app_kustomization_path"
 		namespace: $app_id
 		resources:
 		$resources
@@ -352,6 +358,7 @@ compile_statics() {
 }
 
 compile_all() {
+	rm -rf "$app_tmp_path/"*
 	compile_tpls $1
 	compile_statics
 }
@@ -504,7 +511,7 @@ reinstall)
 update)
 
 	begin Updating Repository
-	current_path=$(pwd)
+	current_path=$PWD
 	cd $repo_path
 	git pull
 	repo_current_branch=$(git branch | cut -d ' ' -f2)
@@ -512,7 +519,7 @@ update)
 	if [ $repo_current_branch != $repo_new_branch ]; then
 		git checkout $repo_new_branch
 	fi
-	cd $current_path
+	cd "$current_path"
 
 	complete
 
@@ -520,20 +527,20 @@ update)
 init)
 
 	if ! app_cloud_exists; then
-		mkdir -p $app_path
-		if [ ! "$(ls -A $app_path)" ]; then
+		mkdir -p "$app_path"
+		if [ ! "$(ls -A "$app_path")" ]; then
 			begin Generating App Directory
-			cp -r $repo_app_path/* $app_path
-			git init $app_path
+			cp -r $repo_app_path/* "$app_path"
+			git init "$app_path"
 			note=false
 		else
 			begin Generating Cloud Directory
-			cp -r $repo_app_cloud_path $app_cloud_path
-			mkdir -p $app_samples_path
+			cp -r $repo_app_cloud_path "$app_cloud_path"
+			mkdir -p "$app_samples_path"
 			for sample_path in "${app_sample_paths[@]}"; do
 				destination_path=$app_samples_path/$sample_path
-				mkdir -p $(dirname $destination_path)
-				cp $repo_app_path/$sample_path $destination_path
+				mkdir -p $(dirname "$destination_path")
+				cp $repo_app_path/$sample_path "$destination_path"
 			done
 			note=true
 		fi
@@ -541,15 +548,15 @@ init)
 		begin Setting Application
 		echo "Enter name: \c"
 		read	app_name
-		echo "app_name=$app_name" >> $app_base_path
+		echo "app_name=$app_name" >> "$app_base_path"
 		echo "Enter port: \c"
 		read	rails_cluster_port
-		echo "rails_cluster_port=$rails_cluster_port" >> $app_dev_path
+		echo "rails_cluster_port=$rails_cluster_port" >> "$app_dev_path"
 
 		begin Setting Docker Repository
 		echo "Enter rails repo: \c"
 		read rails_repo
-		echo "rails_repo=$rails_repo:\$app_env" >> $app_base_path
+		echo "rails_repo=$rails_repo:\$app_env" >> "$app_base_path"
 
 		complete
 
@@ -575,7 +582,7 @@ destroy)
 	vm_kubectl delete namespace $app_id
 
 	begin Removing Cloud Directory
-	rm -rf $app_cloud_path
+	rm -rf "$app_cloud_path"
 
 	complete
 
@@ -586,7 +593,7 @@ envs)
 	''|list)
 
 		ensure_app
-		list=$(ls -1 $app_envs_path)
+		list=$(ls -1 "$app_envs_path")
 		if [ -z "$list" ]; then
 			error No environments found
 		else
@@ -600,8 +607,8 @@ envs)
 		if app_env_exists $3; then
 			error Environment $3 already exists
 		else
-			mkdir -p $app_envs_path
-			touch $app_env_path
+			mkdir -p "$app_envs_path"
+			touch "$app_env_path"
 			cloud envs edit $3
 		fi
 
@@ -609,13 +616,13 @@ envs)
 	edit)
 
 		ensure_app_env $3
-		edit $app_env_path
+		edit "$app_env_path"
 
 	;;
 	remove)
 
 		ensure_app_env $3
-		rm -f $app_env_path
+		rm -f "$app_env_path"
 
 	;;
 	help)
@@ -651,7 +658,7 @@ build)
 	fi
 	compile_tpls build
 	compile_statics
-	vm_kubectl apply -k $app_apply_path
+	vm_kubectl apply -k \"$app_apply_path\"
 	ok
 
 	echo "\nUse \`cloud log <pod-name>\` to see logs"
@@ -661,7 +668,7 @@ deploy)
 
 	load_app
 	compile_all deploy
-	vm_kubectl apply -k $app_apply_path
+	vm_kubectl apply -k \"$app_apply_path\"
 
 ;;
 undeploy)
