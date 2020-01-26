@@ -235,7 +235,7 @@ Print documentation using:
 cloud help
 ```
 
-## Knonwn issues
+## Known issues
 
 ### macOS Catalina
 
