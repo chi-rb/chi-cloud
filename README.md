@@ -89,7 +89,7 @@ cloud deploy
 
 ### Undeploy
 
-Undeploys app from the cloud:
+Occasionally it is useful to delete all deployed pods to recover from an error, this can be achieved with:
 ```
 cloud undeploy
 ```
