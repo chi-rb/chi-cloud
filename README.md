@@ -1,6 +1,6 @@
 # Cloud
 
-Provides a simple orchestration of a Ruby on Rails deployment within a localised Kubernetes environment on OSX utilising a xhyve hypervisor.
+Provides a simple orchestration of a Ruby on Rails deployment within a localised Kubernetes environment on macOS utilising a xhyve hypervisor.
 
 ## Why?
 
@@ -52,15 +52,15 @@ Cloud can be used to generate a new Rails app by running:
 ```
 cloud app init path_to/awesome/new_app
 ```
-This will generate a Rails v6 app
+This will generate a Rails app from the current stable Rails branch.
 
 A Cloud deployment can be added to an existing Rails app by navigating to the root directory and running:
 ```
 cloud app init
 ```
-This will leave the existing application as it is but adds a `cloud` directory that will contain the required configuration.
+This will leave the existing application as it is but adds a `cloud` directory, that will contain the required configuration.
 
-NB: If using macOS Catalina see Known Issues below.
+NB: If using macOS Catalina see `Known Issues` below.
 
 ## How to manage a cloud?
 
@@ -120,7 +120,7 @@ cloud restart chrome
 
 ### Shell
 
-Opens bash shell in rails pod:
+Opens bash shell in the Rails pod:
 ```
 cloud shell
 ```
@@ -132,7 +132,7 @@ cloud shell hub
 
 ### Attach
 
-Attachs into first process of rails pod:
+Attaches into the first process of Rails pod:
 ```
 cloud attach
 ```
@@ -153,7 +153,7 @@ NOTE: To connect you need to ssh into hacker@cloud.
 
 ### Exec
 
-Executes command in rails pod:
+Executes command in Rails pod:
 ```
 cloud exec -- bundle update
 ```
@@ -165,14 +165,14 @@ cloud exec mysql -- mysqldump
 
 ### Console
 
-Attachs to rails console:
+Attaches to Rails console:
 ```
 cloud console
 ```
 
 ### Rails
 
-Executes rails command:
+Executes Rails command:
 ```
 cloud rails db:migrate
 ```
@@ -186,12 +186,12 @@ cloud open
 
 ### Log
 
-Tails log of rails pod:
+Tails log of Rails pod:
 ```
 cloud log
 ```
 
-Or any ohter:
+Or any other:
 ```
 cloud log redis
 ```
