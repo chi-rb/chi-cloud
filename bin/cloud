@@ -501,13 +501,6 @@ uninstall)
 	complete
 
 ;;
-reinstall)
-
-	cloud uninstall
-	echo
-	cloud install
-
-;;
 update)
 
 	begin Updating Repository
@@ -693,6 +686,13 @@ rails)
 	load_app
 	shift 1
 	pod_exec $rails_pod bin/rails $@
+
+;;
+runner)
+
+	load_app
+	shift 1
+	pod_exec $rails_pod bin/rails runner \"$@\"
 
 ;;
 shell)

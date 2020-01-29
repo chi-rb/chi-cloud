@@ -20,8 +20,6 @@ Run this commnad:
 cloud uninstall
 ```
 
-NOTE: There is a shortcut if you want to resintall `cloud resinstall`
-
 ## How to update?
 
 To update to the latest commit on master:
