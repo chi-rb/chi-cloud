@@ -35,7 +35,7 @@ user_auth_path=$user_cloud_path/auth.json
 user_disk_path=$user_cloud_path/disk.img
 user_agent_path=$HOME/Library/LaunchAgents/$agent_name
 
-if ([ $1 = init ] || [ $1 = destroy ]) && [ ! -z $2 ]; then
+if ([ "$1" = init ] || [ "$1" = destroy ]) && [ ! -z $2 ]; then
 	if [ $1 = init ]; then
 		mkdir -p $2
 	fi
@@ -636,8 +636,10 @@ envs)
 	;;
 	*)
 
-		unknown $2
-		echo
+		if [ ! -z $2 ]; then
+			unknown $2
+			echo
+		fi
 		cloud envs help
 
 	;;
@@ -831,8 +833,10 @@ vm)
 	;;
 	*)
 
-		unknown $2
-		echo
+		if [ ! -z $2 ]; then
+			unknown $2
+			echo
+		fi
 		cloud vm help
 
 	;;
@@ -873,8 +877,10 @@ help)
 ;;
 *)
 
-	unknown $1
-	echo
+	if [ ! -z $1 ]; then
+		unknown $1
+		echo
+	fi
 	cloud help
 
 ;;
