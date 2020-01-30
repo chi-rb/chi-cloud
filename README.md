@@ -50,13 +50,13 @@ cloud update v1.4.0
 Cloud can be used to generate a new Rails app by running:
 
 ```
-cloud app init path_to/awesome/new_app
+cloud init path_to/awesome/new_app
 ```
 This will generate a Rails app from the current stable Rails branch.
 
 A Cloud deployment can be added to an existing Rails app by navigating to the root directory and running:
 ```
-cloud app init
+cloud init
 ```
 This will leave the existing application as it is but adds a `cloud` directory, that will contain the required configuration.
 
