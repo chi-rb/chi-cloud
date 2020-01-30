@@ -36,6 +36,9 @@ user_disk_path=$user_cloud_path/disk.img
 user_agent_path=$HOME/Library/LaunchAgents/$agent_name
 
 if ([ $1 = init ] || [ $1 = destroy ]) && [ ! -z $2 ]; then
+	if [ $1 = init ]; then
+		mkdir -p $2
+	fi
 	app_path=$(cd $2; pwd)
 else
 	app_path=$PWD
@@ -520,7 +523,6 @@ update)
 init)
 
 	if ! app_cloud_exists; then
-		mkdir -p "$app_path"
 		if [ ! "$(ls -A "$app_path")" ]; then
 			begin Generating App Directory
 			cp -r $repo_app_path/* "$app_path"
