@@ -154,6 +154,13 @@ Attachs to rails console:
 cloud console
 ```
 
+### Runner
+
+Executes rails command with runner:
+```
+cloud runner User.last
+```
+
 ### Rails
 
 Executes rails command:
