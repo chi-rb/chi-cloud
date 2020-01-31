@@ -174,12 +174,25 @@ export_exists() {
 
 vm_ssh() {
 	ssh -tq \
+	-o 'ConnectTimeout=10' \
 	-o 'ControlMaster=auto' \
 	-o 'ControlPersist=600' \
 	-o 'ControlPath=/tmp/%r@%h' \
 	-o 'UserKnownHostsFile=/dev/null' \
 	-o 'StrictHostKeyChecking=no' \
 	$vm_user@$vm_name $@
+}
+
+wait_ssh() {
+	while :; do
+		vm_ssh exit
+		if [ $? -eq 0 ]; then
+			break
+		else
+			echo Retrying ssh into vm
+			sleep 1
+		fi
+	done
 }
 
 vm_kubectl() {
@@ -450,6 +463,7 @@ install)
 		begin Sharing Home Directory
 		echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
 		sudo nfsd update
+		wait_ssh
 		vm_ssh sudo sh <<-SSH
 			echo "$mac_ip:$exports_home_path\t$HOME\tnfs local_lock=all\t0 0" >> /etc/fstab
 			mkdir -p $HOME
