@@ -169,7 +169,7 @@ host_exists() {
 }
 
 export_exists() {
-	test -f $exports_path && sudo grep $exports_home_path $exports_path > /dev/null 2>&1
+	test -f $exports_path && sudo grep $exports_home_path $exports_path >/dev/null 2>&1
 }
 
 vm_ssh() {
