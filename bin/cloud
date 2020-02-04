@@ -694,24 +694,11 @@ restart)
 	app_kubectl delete pod $(find_pod ${2:-$rails_pod})
 
 ;;
-console)
-
-	load_app
-	pod_exec $rails_pod bin/rails c
-
-;;
 rails)
 
 	load_app
 	shift 1
 	pod_exec $rails_pod bin/rails $@
-
-;;
-runner)
-
-	load_app
-	shift 1
-	pod_exec $rails_pod bin/rails runner \"$@\"
 
 ;;
 shell)
@@ -880,7 +867,6 @@ help)
 		  attach [pod]  Attachs into first process of pod (rails by default)
 		  tunnel pod    Creates temporary tunnel into pod
 		  exec [pod]    Executes shell command in pod (rails by default)
-		  console       Attachs to rails console
 		  rails         Executes rails command
 		  open          Opens browser pointing to app
 		  log [pod]     Tails pod log (rails by default)
