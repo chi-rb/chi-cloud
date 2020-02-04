@@ -7,7 +7,7 @@ metadata:
 spec:
   restartPolicy: Never
   containers:
-    - image: gcr.io/kaniko-project/executor:latest
+    - image: gcr.io/kaniko-project/executor:v0.16.0
       name: kaniko
       args:
         - --destination={{ repo }}
