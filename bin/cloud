@@ -3,8 +3,10 @@
 hosts_path=/etc/hosts
 bin_path=/usr/local/bin
 cloud_path=$bin_path/cloud
-agent_name=com.cloud.plist
 rails_pod=rails
+
+agent_name=com.cloud
+agent_filename=$agent_name.plist
 
 tmp_path=/tmp
 tmp_conf_path=$tmp_path/conf
@@ -33,7 +35,7 @@ user_cloud_path=$HOME/.cloud
 user_conf_path=$user_cloud_path/conf
 user_auth_path=$user_cloud_path/auth.json
 user_disk_path=$user_cloud_path/disk.img
-user_agent_path=$HOME/Library/LaunchAgents/$agent_name
+user_agent_path=$HOME/Library/LaunchAgents/$agent_filename
 
 if ([ "$1" = init ] || [ "$1" = destroy ]) && [ ! -z $2 ]; then
 	if [ $1 = init ]; then
@@ -73,11 +75,15 @@ vm_cpus=4
 k3s_latest_url=https://github.com/rancher/k3s/releases/latest
 k3s_path=/usr/local/bin/k3s
 
-conf_names=(
+net_setting_names=(
+	mac_ip
+	vm_ip
+)
+user_setting_names=(
 	vm_mem
 	vm_cpus
 )
-conf_descs=(
+user_setting_descs=(
 	'Virtual machine memory'
 	'Virtual machine cpus'
 )
@@ -123,18 +129,18 @@ gen_id() {
 }
 
 configure() {
-	indexes=${!conf_names[@]}
+	indexes=${!user_setting_names[@]}
 	for i in $indexes; do
-		desc=${conf_descs[$i]}
-		value=${!conf_names[$i]}
+		desc=${user_setting_descs[$i]}
+		value=${!user_setting_names[$i]}
 		echo $desc: $value
 	done
 	if ! correct; then
 		echo
 		for i in $indexes; do
-			desc=${conf_descs[$i]}
-			name=${conf_names[$i]}
-			value=${!conf_names[$i]}
+			desc=${user_setting_descs[$i]}
+			name=${user_setting_names[$i]}
+			value=${!user_setting_names[$i]}
 			echo $desc: $value
 			if ! correct; then
 				echo "Enter new value: \c"
@@ -142,12 +148,12 @@ configure() {
 			fi
 			echo
 		done
-		rm -f $user_conf_path
-		touch $user_conf_path
+		touch $user_setting_path
 		for i in $indexes; do
-			name=${conf_names[$i]}
-			value=${!conf_names[$i]}
-			echo $name=$value >> $user_conf_path
+			name=${user_setting_names[$i]}
+			value=${!user_setting_names[$i]}
+			sudo sed -i '' "/$name/d" $user_setting_path
+			echo $name=$value >> $user_setting_path
 		done
 		configure
 	fi
@@ -160,8 +166,17 @@ authorize() {
 	read -s auth_pass
 }
 
-vm_exists() {
-	test ! -z $vm_ip
+net_settings_exists() {
+	for name in ${net_setting_names[@]}; do
+		if cat $user_conf_path | grep $name >/dev/null 2>&1; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+vm_running() {
+	sudo launchctl list | grep $agent_name >/dev/null 2>&1
 }
 
 host_exists() {
@@ -189,8 +204,8 @@ wait_ssh() {
 		if [ $? -eq 0 ]; then
 			break
 		else
-			echo Retrying ssh into vm
-			sleep 1
+			echo Waiting ssh to be ready
+			sleep 30
 		fi
 	done
 }
@@ -349,28 +364,35 @@ compile_statics() {
 		apiVersion: v1
 		kind: Secret
 		metadata:
-		  name: docker
-		  labels:
-		    name: docker
+			name: docker
+			labels:
+				name: docker
 		type: kubernetes.io/dockerconfigjson
 		data:
-		  .dockerconfigjson: $(cat $user_auth_path | base64)
+			.dockerconfigjson: $(cat $user_auth_path | base64)
 	YML
 	cat <<-YML > "$app_namespace_path"
 		apiVersion: v1
 		kind: Namespace
 		metadata:
-		  name: $app_id
-		  labels:
-		    name: $app_id
+			name: $app_id
+			labels:
+				name: $app_id
 	YML
 	escaped_app_apply_path=$(echo "$app_apply_path/" | sed 's/\//\\\//g')
 	resources=$(find "$app_apply_path" -name '*.yml' | sed "s/$escaped_app_apply_path//g" | sed 's/^/  - /g')
-  cat <<-YML > "$app_kustomization_path"
+	cat <<-YML > "$app_kustomization_path"
 		namespace: $app_id
 		resources:
 		$resources
 	YML
+}
+
+vm_stop() {
+	cloud vm stop
+	while vm_running; do
+		sleep 5
+	done
 }
 
 compile_all() {
@@ -394,92 +416,24 @@ fi
 case $1 in
 install)
 
-	begin Choosing Configuration
-	mkdir $user_cloud_path
-	configure
-
 	if [ ! -d $repo_path ]; then
 		begin Cloning Repository
 		git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
 		sudo mv $repo_tmp_path $repo_path
 		sudo ln -s $repo_cloud_path $cloud_path
-
-		begin Dowloading Images
-		mkdir $repo_vm_path
-		curl -o $repo_initrd_path $s3_initrd_url
-		curl -o $repo_vmlinuz_path $s3_vmlinuz_url
-		curl -o $repo_disk_path $s3_disk_url
 	fi
 
-	if ! vm_exists; then
-		begin Creating Virtual Machine
-		tar xJvf $repo_disk_path -C $user_cloud_path
-		vm_id=$(gen_id)
-		mkdir -p $(dirname $user_agent_path)
-		cat <<-XML | sudo tee $user_agent_path >/dev/null
-			<?xml version="1.0" encoding="UTF-8"?>
-			<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-			<plist version="1.0">
-				<dict>
-					<key>Label</key>
-					<string>com.cloud</string>
-					<key>ProgramArguments</key>
-					<array>
-						<string>$repo_xhyve_path</string>
-						<string>-A</string>
-						<string>-U</string>
-						<string>$vm_id</string>
-						<string>-c</string>
-						<string>$vm_cpus</string>
-						<string>-m</string>
-						<string>$vm_mem</string>
-						<string>-s</string>
-						<string>0,hostbridge</string>
-						<string>-s</string>
-						<string>2,virtio-net</string>
-						<string>-s</string>
-						<string>4,virtio-blk,$user_disk_path</string>
-						<string>-f</string>
-						<string>kexec,$repo_vmlinuz_path,$repo_initrd_path,root=/dev/vda1 ro</string>
-					</array>
-					<key>RunAtLoad</key>
-					<true/>
-				</dict>
-			</plist>
-		XML
-		cloud vm start
-		nc -l 1234 > $tmp_conf_path
-		. $tmp_conf_path
-		cat $tmp_conf_path >> $user_conf_path
-		rm $tmp_conf_path
-	fi
-
-	if ! host_exists; then
-		begin Adding Hostname
-		echo $vm_ip $vm_name | sudo tee -a $hosts_path
-	fi
-
-	if ! export_exists; then
-		begin Sharing Home Directory
-		echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
-		sudo nfsd update
-		wait_ssh
-		vm_ssh sudo sh <<-SSH
-			echo "$mac_ip:$exports_home_path\t$HOME\tnfs local_lock=all\t0 0" >> /etc/fstab
-			mkdir -p $HOME
-			mount $HOME
-		SSH
-	fi
+	cloud vm install nested
 
 	begin Authorizing hub.docker.com
 	authorize
 	cat <<-JSON > $user_auth_path
 		{
-		  "auths": {
-		    "https://index.docker.io/v1/": {
-		      "auth": "$(echo "$auth_user:$auth_pass\c" | base64)"
-		    }
-		  }
+			"auths": {
+				"https://index.docker.io/v1/": {
+					"auth": "$(echo "$auth_user:$auth_pass\c" | base64)"
+				}
+			}
 		}
 	JSON
 
@@ -488,23 +442,7 @@ install)
 ;;
 uninstall)
 
-	if [ -f $user_agent_path ]; then
-		begin Removing Agent
-		sudo launchctl unload -w $user_agent_path
-		sudo rm $user_agent_path
-	fi
-
-	if host_exists; then
-		begin Removing Hostname
-		sudo sed -i '' "/$vm_name/d" $hosts_path
-	fi
-
-	if export_exists; then
-		begin Unsharing Home Directroy
-		escaped_exports_home_path=$(echo $exports_home_path | sed 's/\//\\\//g')
-		sudo sed -i '' "/$escaped_exports_home_path/d" $exports_path
-		sudo nfsd update
-	fi
+	cloud vm uninstall nested
 
 	if [ -d $user_cloud_path ]; then
 		begin Removing Settings
@@ -641,11 +579,11 @@ envs)
 			Usage: cloud envs <command> [options]
 
 			Available commands:
-			  list          Lists envs
-			  add           Adds env
-			  edit          Edits env
-			  remove        Removes env
-			  help          Prints documentation
+				list					Lists envs
+				add						Adds env
+				edit					Edits env
+				remove				Removes env
+				help					Prints documentation
 		DOC
 
 	;;
@@ -758,14 +696,152 @@ log)
 vm)
 
 	case $2 in
+	install)
+
+		begin Choosing Configuration
+		mkdir -p $user_cloud_path
+		configure
+
+		if [ ! -d $repo_vm_path ]; then
+			begin Dowloading Images
+			mkdir $repo_vm_path
+			curl -o $repo_initrd_path $s3_initrd_url
+			curl -o $repo_vmlinuz_path $s3_vmlinuz_url
+			curl -o $repo_disk_path $s3_disk_url
+		fi
+
+		if [ ! -f $user_disk_path ]; then
+			begin Creating Disk
+			tar xJvf $repo_disk_path -C $user_cloud_path
+			vm_id=$(gen_id)
+		fi
+
+		if [ ! -f $user_agent_path ]; then
+			begin Installing agent
+			mkdir -p $(dirname $user_agent_path)
+			cat <<-XML | sudo tee $user_agent_path >/dev/null
+				<?xml version="1.0" encoding="UTF-8"?>
+				<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+				<plist version="1.0">
+					<dict>
+						<key>Label</key>
+						<string>com.cloud</string>
+						<key>ProgramArguments</key>
+						<array>
+							<string>$repo_xhyve_path</string>
+							<string>-A</string>
+							<string>-U</string>
+							<string>$vm_id</string>
+							<string>-c</string>
+							<string>$vm_cpus</string>
+							<string>-m</string>
+							<string>$vm_mem</string>
+							<string>-s</string>
+							<string>0,hostbridge</string>
+							<string>-s</string>
+							<string>2,virtio-net</string>
+							<string>-s</string>
+							<string>4,virtio-blk,$user_disk_path</string>
+							<string>-f</string>
+							<string>kexec,$repo_vmlinuz_path,$repo_initrd_path,root=/dev/vda1 ro</string>
+						</array>
+						<key>RunAtLoad</key>
+						<true/>
+					</dict>
+				</plist>
+			XML
+		fi
+
+		if ! net_settings_exists; then
+			begin First Boot
+			while :; do
+				echo Waiting to receive ip
+				cloud vm start
+				nc -l 1234 > $tmp_conf_path & sleep 30; kill $! >/dev/null 2>&1
+				if [ -z "$(cat $tmp_conf_path)" ]; then
+					vm_stop
+				else
+					break
+				fi
+			done
+			. $tmp_conf_path
+			cat $tmp_conf_path >> $user_conf_path
+			rm $tmp_conf_path
+		fi
+
+		if ! host_exists; then
+			begin Adding Hostname
+			echo $vm_ip $vm_name | sudo tee -a $hosts_path
+		fi
+
+		if ! export_exists; then
+			begin Sharing Home Directory
+			echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
+			sudo nfsd update
+			wait_ssh
+			vm_ssh sudo sh <<-SSH
+				echo "$mac_ip:$exports_home_path\t$HOME\tnfs local_lock=all\t0 0" >> /etc/fstab
+				mkdir -p $HOME
+				mount $HOME
+			SSH
+		fi
+
+		if [ "$3" != nested ]; then
+			complete
+		fi
+
+	;;
+	uninstall)
+
+		if vm_running; then
+			begin Stopping Virtual Machine
+			vm_stop
+		fi
+
+		if [ -f $user_agent_path ]; then
+			begin Removing Agent
+			sudo rm $user_agent_path
+		fi
+
+		if [ "$3" != nested ]; then
+			if net_settings_exists; then
+				begin Removing Network Settings
+				for name in ${net_setting_names[@]}; do
+					sudo sed -i '' "/$name/d" $user_conf_path
+				done
+			fi
+			if [ -d $repo_vm_path ]; then
+				begin Removing Virtual Machine
+				rm -rf $repo_vm_path
+				rm -rf $user_disk_path
+			fi
+		fi
+
+		if host_exists; then
+			begin Removing Hostname
+			sudo sed -i '' "/$vm_name/d" $hosts_path
+		fi
+
+		if export_exists; then
+			begin Unsharing Home Directroy
+			escaped_exports_home_path=$(echo $exports_home_path | sed 's/\//\\\//g')
+			sudo sed -i '' "/$escaped_exports_home_path/d" $exports_path
+			sudo nfsd update
+		fi
+
+		if [ "$3" != nested ]; then
+			complete
+		fi
+
+	;;
 	start)
 
-		sudo launchctl load -w $user_agent_path
+		sudo launchctl load -w $user_agent_path >/dev/null
 
 	;;
 	stop)
 
-		sudo launchctl unload -w $user_agent_path
+		sudo launchctl unload -w $user_agent_path >/dev/null 2>&1
 
 	;;
 	restart)
@@ -823,13 +899,13 @@ vm)
 			Usage: cloud vm <command> [options]
 
 			Available commands:
-			  start         Boots virtual machine
-			  stop          Halts virtual machine
-			  restart       Stops and starts
-			  shell         Opens bash shell
-			  exec          Executes command
-			  update        Updates operating system
-			  help          Prints documentation
+				start					Boots virtual machine
+				stop					Halts virtual machine
+				restart				Stops and starts
+				shell					Opens bash shell
+				exec					Executes command
+				update				Updates operating system
+				help					Prints documentation
 		DOC
 
 	;;
@@ -852,27 +928,27 @@ help)
 		Orchestrates Rails+Kubernetes Clouds.
 
 		Available commands:
-		  install       Setups script
-		  uninstall     Unsetups script
-		  reinstall     Installs and uninstalls
-		  update [tag]  Updates script
-		  init [path]   Generates folder and initializes cloud
-		  destroy       Removes cloud folder and destroy cloud
-		  build         Builds docker images
-		  deploy        Deploys app into the cloud
-		  undeploy      Undeploys app from the cloud
-		  status [pod]  Prints status of pods (all by default)
-		  restart [pod] Restart pod (rails by default)
-		  shell [pod]   Opens bash shell in pod (rails by default)
-		  attach [pod]  Attachs into first process of pod (rails by default)
-		  tunnel pod    Creates temporary tunnel into pod
-		  exec [pod]    Executes shell command in pod (rails by default)
-		  rails         Executes rails command
-		  open          Opens browser pointing to app
-		  log [pod]     Tails pod log (rails by default)
-		  envs          Manages environments
-		  vm            Manages virtual machine
-		  help          Prints documentation
+			install				Setups script
+			uninstall			Unsetups script
+			reinstall			Installs and uninstalls
+			update [tag]	Updates script
+			init [path]		Generates folder and initializes cloud
+			destroy				Removes cloud folder and destroy cloud
+			build					Builds docker images
+			deploy				Deploys app into the cloud
+			undeploy			Undeploys app from the cloud
+			status [pod]	Prints status of pods (all by default)
+			restart [pod] Restart pod (rails by default)
+			shell [pod]		Opens bash shell in pod (rails by default)
+			attach [pod]	Attachs into first process of pod (rails by default)
+			tunnel pod		Creates temporary tunnel into pod
+			exec [pod]		Executes shell command in pod (rails by default)
+			rails					Executes rails command
+			open					Opens browser pointing to app
+			log [pod]			Tails pod log (rails by default)
+			envs					Manages environments
+			vm						Manages virtual machine
+			help					Prints documentation
 	DOC
 
 ;;
