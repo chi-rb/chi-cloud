@@ -584,11 +584,11 @@ envs)
 			Usage: cloud envs <command> [options]
 
 			Available commands:
-				list					Lists envs
-				add						Adds env
-				edit					Edits env
-				remove				Removes env
-				help					Prints documentation
+				list          Lists envs
+				add           Adds env
+				edit          Edits env
+				remove        Removes env
+				help          Prints documentation
 		DOC
 
 	;;
@@ -908,13 +908,13 @@ vm)
 			Usage: cloud vm <command> [options]
 
 			Available commands:
-				start					Boots virtual machine
-				stop					Halts virtual machine
-				restart				Stops and starts
-				shell					Opens bash shell
-				exec					Executes command
-				update				Updates operating system
-				help					Prints documentation
+				start         Boots virtual machine
+				stop          Halts virtual machine
+				restart       Stops and starts
+				shell         Opens bash shell
+				exec          Executes command
+				update        Updates operating system
+				help          Prints documentation
 		DOC
 
 	;;
@@ -937,27 +937,27 @@ help)
 		Orchestrates Rails+Kubernetes Clouds.
 
 		Available commands:
-			install				Setups script
-			uninstall			Unsetups script
-			reinstall			Installs and uninstalls
-			update [tag]	Updates script
-			init [path]		Generates folder and initializes cloud
-			destroy				Removes cloud folder and destroy cloud
-			build					Builds docker images
-			deploy				Deploys app into the cloud
-			undeploy			Undeploys app from the cloud
-			status [pod]	Prints status of pods (all by default)
+			install       Setups script
+			uninstall     Unsetups script
+			reinstall     Installs and uninstalls
+			update [tag]  Updates script
+			init [path]   Generates folder and initializes cloud
+			destroy       Removes cloud folder and destroy cloud
+			build         Builds docker images
+			deploy        Deploys app into the cloud
+			undeploy      Undeploys app from the cloud
+			status [pod]  Prints status of pods (all by default)
 			restart [pod] Restart pod (rails by default)
-			shell [pod]		Opens bash shell in pod (rails by default)
-			attach [pod]	Attachs into first process of pod (rails by default)
-			tunnel pod		Creates temporary tunnel into pod
-			exec [pod]		Executes shell command in pod (rails by default)
-			rails					Executes rails command
-			open					Opens browser pointing to app
-			log [pod]			Tails pod log (rails by default)
-			envs					Manages environments
-			vm						Manages virtual machine
-			help					Prints documentation
+			shell [pod]   Opens bash shell in pod (rails by default)
+			attach [pod]  Attachs into first process of pod (rails by default)
+			tunnel pod    Creates temporary tunnel into pod
+			exec [pod]    Executes shell command in pod (rails by default)
+			rails         Executes rails command
+			open          Opens browser pointing to app
+			log [pod]     Tails pod log (rails by default)
+			envs          Manages environments
+			vm            Manages virtual machine
+			help          Prints documentation
 	DOC
 
 ;;
