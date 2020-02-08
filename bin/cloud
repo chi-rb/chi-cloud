@@ -364,20 +364,20 @@ compile_statics() {
 		apiVersion: v1
 		kind: Secret
 		metadata:
-			name: docker
-			labels:
-				name: docker
+		  name: docker
+		  labels:
+		    name: docker
 		type: kubernetes.io/dockerconfigjson
 		data:
-			.dockerconfigjson: $(cat $user_auth_path | base64)
+		  .dockerconfigjson: $(cat $user_auth_path | base64)
 	YML
 	cat <<-YML > "$app_namespace_path"
 		apiVersion: v1
 		kind: Namespace
 		metadata:
-			name: $app_id
-			labels:
-				name: $app_id
+		  name: $app_id
+		  labels:
+		    name: $app_id
 	YML
 	escaped_app_apply_path=$(echo "$app_apply_path/" | sed 's/\//\\\//g')
 	resources=$(find "$app_apply_path" -name '*.yml' | sed "s/$escaped_app_apply_path//g" | sed 's/^/  - /g')
@@ -429,11 +429,11 @@ install)
 	authorize
 	cat <<-JSON > $user_auth_path
 		{
-			"auths": {
-				"https://index.docker.io/v1/": {
-					"auth": "$(echo "$auth_user:$auth_pass\c" | base64)"
-				}
-			}
+		  "auths": {
+		    "https://index.docker.io/v1/": {
+		      "auth": "$(echo "$auth_user:$auth_pass\c" | base64)"
+		    }
+		  }
 		}
 	JSON
 
@@ -723,31 +723,31 @@ vm)
 				<?xml version="1.0" encoding="UTF-8"?>
 				<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 				<plist version="1.0">
-					<dict>
-						<key>Label</key>
-						<string>com.cloud</string>
-						<key>ProgramArguments</key>
-						<array>
-							<string>$repo_xhyve_path</string>
-							<string>-A</string>
-							<string>-U</string>
-							<string>$vm_id</string>
-							<string>-c</string>
-							<string>$vm_cpus</string>
-							<string>-m</string>
-							<string>$vm_mem</string>
-							<string>-s</string>
-							<string>0,hostbridge</string>
-							<string>-s</string>
-							<string>2,virtio-net</string>
-							<string>-s</string>
-							<string>4,virtio-blk,$user_disk_path</string>
-							<string>-f</string>
-							<string>kexec,$repo_vmlinuz_path,$repo_initrd_path,root=/dev/vda1 ro</string>
-						</array>
-						<key>RunAtLoad</key>
-						<true/>
-					</dict>
+				  <dict>
+				    <key>Label</key>
+				    <string>com.cloud</string>
+				    <key>ProgramArguments</key>
+				    <array>
+				      <string>$repo_xhyve_path</string>
+				      <string>-A</string>
+				      <string>-U</string>
+				      <string>$vm_id</string>
+				      <string>-c</string>
+				      <string>$vm_cpus</string>
+				      <string>-m</string>
+				      <string>$vm_mem</string>
+				      <string>-s</string>
+				      <string>0,hostbridge</string>
+				      <string>-s</string>
+				      <string>2,virtio-net</string>
+				      <string>-s</string>
+				      <string>4,virtio-blk,$user_disk_path</string>
+				      <string>-f</string>
+				      <string>kexec,$repo_vmlinuz_path,$repo_initrd_path,root=/dev/vda1 ro</string>
+				    </array>
+				    <key>RunAtLoad</key>
+				    <true/>
+				  </dict>
 				</plist>
 			XML
 		fi
