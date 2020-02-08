@@ -167,12 +167,16 @@ authorize() {
 }
 
 net_settings_exists() {
-	for name in ${net_setting_names[@]}; do
-		if cat $user_conf_path | grep $name >/dev/null 2>&1; then
-			return 0
-		fi
-	done
-	return 1
+	if [ -f $user_conf_path ]; then
+		for name in ${net_setting_names[@]}; do
+			if cat $user_conf_path | grep $name >/dev/null 2>&1; then
+				return 0
+			fi
+		done
+		return 1
+	else
+		return 1
+	fi
 }
 
 vm_running() {
@@ -443,6 +447,7 @@ install)
 uninstall)
 
 	cloud vm uninstall nested
+	beginned=true
 
 	if [ -d $user_cloud_path ]; then
 		begin Removing Settings
@@ -697,6 +702,10 @@ vm)
 
 	case $2 in
 	install)
+
+		if [ "$3" = nested ]; then
+			beginned=true
+		fi
 
 		begin Choosing Configuration
 		mkdir -p $user_cloud_path
