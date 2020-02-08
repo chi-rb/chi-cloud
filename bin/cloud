@@ -429,17 +429,19 @@ install)
 
 	cloud vm install nested
 
-	begin Authorizing hub.docker.com
-	authorize
-	cat <<-JSON > $user_auth_path
-		{
-		  "auths": {
-		    "https://index.docker.io/v1/": {
-		      "auth": "$(echo "$auth_user:$auth_pass\c" | base64)"
-		    }
-		  }
-		}
-	JSON
+	if [ ! -f $user_auth_path ]; then
+		begin Authorizing hub.docker.com
+		authorize
+		cat <<-JSON > $user_auth_path
+			{
+			  "auths": {
+			    "https://index.docker.io/v1/": {
+			      "auth": "$(echo "$auth_user:$auth_pass\c" | base64)"
+			    }
+			  }
+			}
+		JSON
+	fi
 
 	complete
 
