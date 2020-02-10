@@ -982,7 +982,7 @@ undeploy)
 ;;
 restart)
 
-	cloud_restart
+	cloud_restart $2
 
 ;;
 rails)
