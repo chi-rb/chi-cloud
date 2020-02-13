@@ -525,6 +525,17 @@ cloud_open() {
 	open "http://$vm_name:$rails_cluster_port"
 }
 
+cloud_bin() {
+	path=$1
+	name=$(basename $path)
+	shift
+	if app_cloud_exists; then
+		cloud_exec -- bin/$name $@
+	else
+		$(which -a $name | grep -A 1 $path | tail -n 1) $@
+	fi
+}
+
 cloud_destroy() {
 	load_app
 
@@ -938,6 +949,12 @@ open)
 destroy)
 
 	cloud_destroy
+
+;;
+bin)
+
+	shift
+	cloud_bin $@
 
 ;;
 envs)

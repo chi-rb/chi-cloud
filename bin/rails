@@ -1,1 +1,1 @@
-cloud exec -- bin/rails $@
+cloud bin $0 $@
