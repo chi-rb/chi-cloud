@@ -676,6 +676,13 @@ undeploy)
 	app_kubectl delete --all deployments
 
 ;;
+redeploy)
+
+	load_app
+	app_kubectl delete --all deployments
+	compile_all deploy
+	vm_kubectl apply -k \"$app_apply_path\"
+;;
 restart)
 
 	load_app
@@ -853,6 +860,7 @@ help)
 		  build         Builds docker images
 		  deploy        Deploys app into the cloud
 		  undeploy      Undeploys app from the cloud
+			redeploy      Redeploys app into the cloud
 		  status [pod]  Prints status of pods (all by default)
 		  restart [pod] Restart pod (rails by default)
 		  shell [pod]   Opens bash shell in pod (rails by default)
