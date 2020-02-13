@@ -6,6 +6,9 @@ Provides a simple orchestration of a Ruby on Rails deployment within a localised
 
 I wanted to create a standarized way to manage infrastructure, to enable development teams to work on a consistent platform, whilst lowering the entry bar to running Kubernetes locally.
 
+## What
+TODO
+
 ## How to install?
 
 Begin by running this command:
@@ -58,7 +61,7 @@ A Cloud deployment can be added to an existing Rails app by navigating to the ro
 ```
 cloud init
 ```
-This will leave the existing application as it is but adds a `cloud` directory, that will contain the required configuration.
+This will leave the existing application intact with the addition of a `cloud` directory, that will contain the required configuration.
 
 NB: If using macOS Catalina see `Known Issues` below.
 
