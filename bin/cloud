@@ -29,7 +29,6 @@ repo_vmlinuz_path=$repo_vm_path/vmlinuz
 repo_disk_path=$repo_vm_path/disk.img.xz
 repo_bin_path=$repo_path/bin
 repo_xhyve_path=$repo_bin_path/xhyve
-repo_cloud_path=$repo_bin_path/cloud
 
 user_cloud_path=$HOME/.cloud
 user_conf_path=$user_cloud_path/conf
@@ -148,12 +147,12 @@ configure() {
 			fi
 			echo
 		done
-		touch $user_setting_path
+		touch $user_conf_path
 		for i in $indexes; do
 			name=${user_setting_names[$i]}
 			value=${!user_setting_names[$i]}
-			sudo sed -i '' "/$name/d" $user_setting_path
-			echo $name=$value >> $user_setting_path
+			sudo sed -i '' "/$name/d" $user_conf_path
+			echo $name=$value >> $user_conf_path
 		done
 		configure
 	fi
@@ -436,6 +435,16 @@ cloud_install() {
 		JSON
 	fi
 
+	if [ "$(which ruby)" != /usr/local/cloud/bin/ruby ]; then
+		cat <<-DOC
+			Add this into your shell rc file:
+			PATH=/usr/local/cloud/bin:$PATH
+
+			And then:
+			. /shell-rc-path
+		DOC
+	fi
+
 	complete
 }
 
@@ -559,11 +568,6 @@ cloud_restart() {
 	app_kubectl delete pod $(find_pod $pod)
 }
 
-cloud_rails() {
-	load_app
-	pod_exec $rails_pod bin/rails $@
-}
-
 cloud_shell() {
 	load_app
 	pod=$(fallback_pod $1)
@@ -634,7 +638,6 @@ cloud_help() {
 			attach [pod]  Attachs into first process of pod (rails by default)
 			tunnel pod    Creates temporary tunnel into pod
 			exec [pod]    Executes shell command in pod (rails by default)
-			rails         Executes rails command
 			open          Opens browser pointing to app
 			log [pod]     Tails pod log (rails by default)
 			envs          Manages environments
@@ -689,10 +692,6 @@ envs_help() {
 }
 
 vm_install() {
-	begin Choosing Configuration
-	mkdir -p $user_cloud_path
-	configure
-
 	if [ ! -d $repo_vm_path ]; then
 		begin Dowloading Images
 		mkdir $repo_vm_path
@@ -701,46 +700,14 @@ vm_install() {
 		curl -o $repo_disk_path $s3_disk_url
 	fi
 
+	if [ ! -f $user_agent_path ]; then
+		vm_config nested
+	fi
+
 	if [ ! -f $user_disk_path ]; then
 		begin Creating Disk
 		tar xJvf $repo_disk_path -C $user_cloud_path
 		vm_id=$(gen_id)
-	fi
-
-	if [ ! -f $user_agent_path ]; then
-		begin Installing agent
-		mkdir -p $(dirname $user_agent_path)
-		cat <<-XML | sudo tee $user_agent_path >/dev/null
-			<?xml version="1.0" encoding="UTF-8"?>
-			<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-			<plist version="1.0">
-				<dict>
-					<key>Label</key>
-					<string>com.cloud</string>
-					<key>ProgramArguments</key>
-					<array>
-						<string>$repo_xhyve_path</string>
-						<string>-A</string>
-						<string>-U</string>
-						<string>$vm_id</string>
-						<string>-c</string>
-						<string>$vm_cpus</string>
-						<string>-m</string>
-						<string>$vm_mem</string>
-						<string>-s</string>
-						<string>0,hostbridge</string>
-						<string>-s</string>
-						<string>2,virtio-net</string>
-						<string>-s</string>
-						<string>4,virtio-blk,$user_disk_path</string>
-						<string>-f</string>
-						<string>kexec,$repo_vmlinuz_path,$repo_initrd_path,root=/dev/vda1 ro</string>
-					</array>
-					<key>RunAtLoad</key>
-					<true/>
-				</dict>
-			</plist>
-		XML
 	fi
 
 	if ! net_settings_exists; then
@@ -821,6 +788,51 @@ vm_uninstall() {
 	fi
 
 	if [ "$1" != nested ]; then
+		complete
+	fi
+}
+
+vm_config() {
+	begin Choosing Configuration
+	mkdir -p $user_cloud_path
+	configure
+
+	begin Installing agent
+	mkdir -p $(dirname $user_agent_path)
+	cat <<-XML | sudo tee $user_agent_path >/dev/null
+		<?xml version="1.0" encoding="UTF-8"?>
+		<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+		<plist version="1.0">
+			<dict>
+				<key>Label</key>
+				<string>com.cloud</string>
+				<key>ProgramArguments</key>
+				<array>
+					<string>$repo_xhyve_path</string>
+					<string>-A</string>
+					<string>-U</string>
+					<string>$vm_id</string>
+					<string>-c</string>
+					<string>$vm_cpus</string>
+					<string>-m</string>
+					<string>$vm_mem</string>
+					<string>-s</string>
+					<string>0,hostbridge</string>
+					<string>-s</string>
+					<string>2,virtio-net</string>
+					<string>-s</string>
+					<string>4,virtio-blk,$user_disk_path</string>
+					<string>-f</string>
+					<string>kexec,$repo_vmlinuz_path,$repo_initrd_path,root=/dev/vda1 ro</string>
+				</array>
+				<key>RunAtLoad</key>
+				<true/>
+			</dict>
+		</plist>
+	XML
+
+	if [ "$1" != nested ]; then
+		vm_restart
 		complete
 	fi
 }
@@ -985,12 +997,6 @@ restart)
 	cloud_restart $2
 
 ;;
-rails)
-
-	shift 1
-	cloud_rails $@
-
-;;
 shell)
 
 	cloud_shell $2
@@ -1033,6 +1039,11 @@ vm)
 	uninstall)
 
 		vm_uninstall
+
+	;;
+	config)
+
+		vm_config
 
 	;;
 	start)
