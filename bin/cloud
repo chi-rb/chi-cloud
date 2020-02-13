@@ -712,6 +712,7 @@ vm_install() {
 
 	if [ ! -f $user_agent_path ]; then
 		vm_id=$(gen_id)
+		mkdir -p $user_cloud_path
 		echo "vm_id=$vm_id" >> $user_conf_path
 		vm_config nested
 	fi
@@ -805,7 +806,6 @@ vm_uninstall() {
 
 vm_config() {
 	begin Choosing Configuration
-	mkdir -p $user_cloud_path
 	configure
 
 	begin Installing agent
