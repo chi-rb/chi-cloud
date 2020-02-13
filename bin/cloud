@@ -416,7 +416,6 @@ cloud_install() {
 		begin Cloning Repository
 		git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
 		sudo mv $repo_tmp_path $repo_path
-		sudo ln -s $repo_cloud_path $cloud_path
 	fi
 
 	vm_install nested
@@ -458,7 +457,7 @@ cloud_uninstall() {
 
 	if [ -d $repo_path ]; then
 		begin Removing Cloud
-		sudo rm -rf $repo_path $cloud_path
+		sudo rm -rf $repo_path
 	fi
 
 	complete
