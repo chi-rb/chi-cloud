@@ -711,13 +711,14 @@ vm_install() {
 	fi
 
 	if [ ! -f $user_agent_path ]; then
+		vm_id=$(gen_id)
+		echo "vm_id=$vm_id" >> $user_conf_path
 		vm_config nested
 	fi
 
 	if [ ! -f $user_disk_path ]; then
 		begin Creating Disk
 		tar xJvf $repo_disk_path -C $user_cloud_path
-		vm_id=$(gen_id)
 	fi
 
 	if ! net_settings_exists; then
