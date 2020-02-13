@@ -147,13 +147,6 @@ Or any other:
 cloud exec mysql -- mysqldump
 ```
 
-### Rails
-
-Executes rails command:
-```
-cloud rails db:migrate
-```
-
 ### Open
 
 Opens browser pointing to app:
