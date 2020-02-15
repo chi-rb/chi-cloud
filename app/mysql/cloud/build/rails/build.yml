@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Pod 
+metadata:
+  name: {{ name }}
+  labels:
+    name: {{ name }}
+spec:
+  restartPolicy: Never
+  containers:
+    - image: gcr.io/kaniko-project/executor:v0.16.0
+      name: kaniko
+      args:
+        - --destination={{ repo }}
+        - --context=/rails/cloud/build/rails
+        - --dockerfile=/Dockerfile
+        - --build-arg=RAILS_ENV={{ app_env }}
+      volumeMounts:
+        - mountPath: /rails
+          name: rails
+        - mountPath: /kaniko/.docker/config.json
+          name: docker
+  volumes:
+    - name: rails
+      hostPath:
+        path: {{ app_path }}
+    - name: docker
+      hostPath:
+        path: {{ user_auth_path }}

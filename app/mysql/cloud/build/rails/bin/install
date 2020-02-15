@@ -1,0 +1,12 @@
+#!/bin/sh
+apt update
+apt install -y nodejs vim
+echo 'gem: --no-document' > /etc/gemrc
+gem update --system
+gem install bundler
+cred_prod=config/credentials.yml.enc.prod
+cred_dev=config/credentials.yml.enc
+if [ "$RAILS_ENV" = production ] && [ -f $cred_prod ]; then
+  rm $cred_dev
+  mv $cred_prod $cred_dev
+fi

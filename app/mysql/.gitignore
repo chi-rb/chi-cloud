@@ -1,0 +1,17 @@
+.DS_Store
+/.byebug_history
+/config/master.key
+
+/public/assets
+
+/.bundle
+/vendor/bundle
+
+/storage/*
+!/storage/.keep
+
+/tmp/*
+!/tmp/.keep
+
+/log/*
+!/log/.keep

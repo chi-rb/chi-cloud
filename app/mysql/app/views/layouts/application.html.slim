@@ -1,0 +1,10 @@
+doctype html
+html lang=I18n.locale
+  head
+    title = content_for :title
+    meta charset=utf-8
+    = csrf_meta_tags
+    = stylesheet_link_tag :application
+    = javascript_include_tag :application
+  body
+    = yield

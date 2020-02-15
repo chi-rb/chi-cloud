@@ -8,7 +8,10 @@ rails_pod=rails
 agent_name=com.cloud
 agent_filename=$agent_name.plist
 
-tmp_path=/tmp
+tmp_path=/tmp/chi-cloud
+tmp_repo_path=$tmp_path/repo
+tmp_base_path=$tmp_path/base
+tmp_cloud_path=$tmp_base_path/cloud
 tmp_conf_path=$tmp_path/conf
 
 exports_path=/etc/exports
@@ -20,9 +23,8 @@ s3_vmlinuz_url=$s3_url/vmlinuz
 s3_disk_url=$s3_url/disk.img.xz
 
 repo_path=/usr/local/cloud
-repo_tmp_path=/tmp/chi-cloud
 repo_app_path=$repo_path/app
-repo_app_cloud_path=$repo_app_path/cloud
+repo_base_path=$repo_app_path/base
 repo_vm_path=$repo_path/vm
 repo_initrd_path=$repo_vm_path/initrd
 repo_vmlinuz_path=$repo_vm_path/vmlinuz
@@ -35,36 +37,6 @@ user_conf_path=$user_cloud_path/conf
 user_auth_path=$user_cloud_path/auth.json
 user_disk_path=$user_cloud_path/disk.img
 user_agent_path=$HOME/Library/LaunchAgents/$agent_filename
-
-if ([ "$1" = init ] || [ "$1" = destroy ]) && [ ! -z $2 ]; then
-	if [ $1 = init ]; then
-		mkdir -p $2
-	fi
-	app_path=$(cd $2; pwd)
-else
-	app_path=$PWD
-fi
-app_cloud_path=$app_path/cloud
-app_tmp_path=$app_path/tmp/cloud
-app_apply_path=$app_tmp_path/apply
-app_secret_path=$app_apply_path/secret.yml
-app_namespace_path=$app_apply_path/namespace.yml
-app_kustomization_path=$app_apply_path/kustomization.yml
-app_envs_path=$app_cloud_path/envs
-app_base_path=$app_envs_path/base
-app_dev_path=$app_envs_path/development
-app_prod_path=$app_envs_path/production
-app_build_path=$app_cloud_path/build
-app_deploy_path=$app_cloud_path/deploy
-app_snippets_path=$app_deploy_path/snippets
-app_samples_path=$app_tmp_path/samples
-app_sample_paths=(
-	config/puma.rb
-	config/database.yml
-	config/cable.yml
-	test/test_helper.rb
-	test/application_system_test_case.rb
-)
 
 vm_user=hacker
 vm_name=cloud
@@ -125,6 +97,39 @@ correct() {
 
 gen_id() {
 	echo $(uuidgen | tr '[:upper:]' '[:lower:]')
+}
+
+set_app_paths() {
+	if [ ! -z "$1" ]; then
+		if [ ${1:0:1} = / ]; then
+			app_path=$1
+		else
+			app_path=$PWD/$1
+		fi
+	else
+		app_path=$PWD
+	fi
+	app_cloud_path=$app_path/cloud
+	app_tmp_path=$app_path/tmp/cloud
+	app_apply_path=$app_tmp_path/apply
+	app_secret_path=$app_apply_path/secret.yml
+	app_namespace_path=$app_apply_path/namespace.yml
+	app_kustomization_path=$app_apply_path/kustomization.yml
+	app_envs_path=$app_cloud_path/envs
+	app_base_path=$app_envs_path/base
+	app_dev_path=$app_envs_path/development
+	app_prod_path=$app_envs_path/production
+	app_build_path=$app_cloud_path/build
+	app_deploy_path=$app_cloud_path/deploy
+	app_snippets_path=$app_deploy_path/snippets
+	app_samples_path=$app_tmp_path/samples
+	app_sample_paths=(
+		config/puma.rb
+		config/database.yml
+		config/cable.yml
+		test/test_helper.rb
+		test/application_system_test_case.rb
+	)
 }
 
 configure() {
@@ -240,6 +245,7 @@ app_cloud_exists() {
 }
 
 load_app() {
+	set_app_paths
 	app_env_name=${1:-development}
 	app_env=$app_env_name
 	ensure_app_env $app_env_name
@@ -414,7 +420,7 @@ fallback_pod() {
 cloud_install() {
 	if [ ! -d $repo_path ]; then
 		begin Cloning Repository
-		git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
+		git clone git@github.com:chi-rb/chi-cloud.git $tmp_path
 		sudo mv $repo_tmp_path $repo_path
 	fi
 
@@ -479,44 +485,68 @@ cloud_update() {
 }
 
 cloud_init() {
+	db=postgres
+	while getopts 'd:' o; do
+		case "$o" in
+		d)
+			db=$OPTARG
+			if [ "$db" != postgres ] && [ "$db" != mysql ]; then
+				error Unknown database $db
+			fi
+		;;
+		esac
+	done
+	shift $((OPTIND-1))
+
+	set_app_paths "$@"
+
 	if ! app_cloud_exists; then
-		if [ ! "$(ls -A "$app_path")" ]; then
+		begin Using $db template
+		mkdir -p $tmp_path
+		rm -rf $tmp_base_path
+		cp -r $repo_base_path $tmp_base_path
+		db_patch=$db.patch
+		cp $repo_app_path/$db_patch $tmp_path
+		patch -s -p0 -d $tmp_path < $tmp_path/$db_patch
+
+		if [ ! -d "$app_path" ]; then
 			begin Generating App Directory
-			cp -r $repo_app_path/* "$app_path"
+			mv $tmp_base_path "$app_path"
 			git init "$app_path"
 			note=false
 		else
-			begin Generating Cloud Directory
-			cp -r $repo_app_cloud_path "$app_cloud_path"
+			begin Adding Cloud Directory
+			mv $tmp_cloud_path "$app_cloud_path"
 			mkdir -p "$app_samples_path"
 			for sample_path in "${app_sample_paths[@]}"; do
 				destination_path=$app_samples_path/$sample_path
 				mkdir -p "$(dirname "$destination_path")"
-				cp $repo_app_path/$sample_path "$destination_path"
+				cp $tmp_base_path/$sample_path "$destination_path"
 			done
+			rm -rf $tmp_base_path
 			note=true
 		fi
-
-		begin Setting Application
-		echo "Enter name: \c"
-		read	app_name
-		echo "app_name=$app_name" >> "$app_base_path"
-		echo "Enter port: \c"
-		read	rails_cluster_port
-		echo "rails_cluster_port=$rails_cluster_port" >> "$app_dev_path"
-
-		begin Setting Docker Repository
-		echo "Enter rails repo: \c"
-		read rails_repo
-		echo "rails_repo=$rails_repo:\$app_env" >> "$app_base_path"
-
-		complete
-
-		if [ $note = true ]; then
-			echo "\nNOTE: You might need to tweak a few files, try using tmp/cloud/samples as a guideline"
-		fi
 	else
-		echo Already initialized
+		error Already initialized
+	fi
+
+	begin Setting Application
+	echo "Enter name: \c"
+	read	app_name
+	echo "app_name=$app_name" >> "$app_base_path"
+	echo "Enter port: \c"
+	read	rails_cluster_port
+	echo "rails_cluster_port=$rails_cluster_port" >> "$app_dev_path"
+
+	begin Setting Docker Repository
+	echo "Enter rails repo: \c"
+	read rails_repo
+	echo "rails_repo=$rails_repo:\$app_env" >> "$app_base_path"
+
+	complete
+
+	if [ $note = true ]; then
+		echo "\nNOTE: You might need to tweak a few files, try using tmp/cloud/samples as a guideline"
 	fi
 }
 
@@ -526,6 +556,7 @@ cloud_open() {
 }
 
 cloud_bin() {
+	set_app_paths
 	path=$1
 	name=$(basename $path)
 	shift
@@ -939,7 +970,8 @@ update)
 ;;
 init)
 
-	cloud_init
+	shift
+	cloud_init "$@"
 
 ;;
 open)

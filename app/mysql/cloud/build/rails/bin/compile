@@ -1,0 +1,6 @@
+#!/bin/sh
+bundle config build.nokogiri --use-system-libraries
+bundle install
+if [ "$RAILS_ENV" = production ]; then
+  bin/rails assets:precompile
+fi

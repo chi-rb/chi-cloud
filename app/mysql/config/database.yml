@@ -1,0 +1,19 @@
+default: &default
+  adapter: mysql2
+  pool: <%= ENV['RAILS_THREADS'].split(':').last %>
+  host: <%= ENV['DB_HOST'] %>
+  port: <%= ENV['DB_PORT'] %>
+  username: <%= ENV['DB_USER'] %>
+  password: <%= ENV['DB_PASS'] %>
+
+production:
+  <<: *default
+  database: production
+
+development:
+  <<: *default
+  database: development
+
+test:
+  <<: *default
+  database: test
