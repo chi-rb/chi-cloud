@@ -420,8 +420,9 @@ fallback_pod() {
 cloud_install() {
 	if [ ! -d $repo_path ]; then
 		begin Cloning Repository
-		git clone git@github.com:chi-rb/chi-cloud.git $tmp_path
-		sudo mv $repo_tmp_path $repo_path
+		mkdir -p $tmp_path
+		git clone git@github.com:chi-rb/chi-cloud.git $tmp_repo_path
+		sudo mv $tmp_repo_path $repo_path
 	fi
 
 	vm_install nested
@@ -758,6 +759,7 @@ vm_install() {
 		while :; do
 			echo Waiting to receive ip
 			cloud vm start
+			mkdir -p $tmp_path
 			nc -l 1234 > $tmp_conf_path & sleep 30; kill $! >/dev/null 2>&1
 			if [ -z "$(cat $tmp_conf_path)" ]; then
 				vm_stop
