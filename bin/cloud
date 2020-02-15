@@ -506,9 +506,11 @@ cloud_init() {
 		mkdir -p $tmp_path
 		rm -rf $tmp_base_path
 		cp -r $repo_base_path $tmp_base_path
-		db_patch=$db.patch
-		cp $repo_app_path/$db_patch $tmp_path
-		patch -s -p0 -d $tmp_path < $tmp_path/$db_patch
+		patch_name=$db.patch
+		patch_path=$tmp_path/$patch_name
+		cp $repo_app_path/$patch_name $tmp_path
+		patch -s -p0 -d $tmp_path < $patch_path
+		rm $patch_path
 
 		if [ ! -d "$app_path" ]; then
 			begin Generating App Directory
