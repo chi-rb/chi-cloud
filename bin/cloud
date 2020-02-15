@@ -512,6 +512,7 @@ cloud_init() {
 
 		if [ ! -d "$app_path" ]; then
 			begin Generating App Directory
+			mkdir -p "$(dirname "$app_path")"
 			mv $tmp_base_path "$app_path"
 			git init "$app_path"
 			note=false
