@@ -74,7 +74,7 @@ diff -ruN base/cloud/envs/base mysql/cloud/envs/base
  redis_repo=redis:5.0
  redis_pod_port=6379
 +
-+mysql_repo=mysql:8.0
++mysql_repo=mysql:5.7
 +mysql_pod_port=3306
 diff -ruN base/cloud/envs/development mysql/cloud/envs/development
 --- base/cloud/envs/development	2020-02-14 11:29:43.000000000 -0300
