@@ -561,23 +561,25 @@ cloud_open() {
 
 cloud_bin() {
 	set_app_paths
-	full_path=$1
-	name=$(basename $full_path)
-	relative_path=bin/$name
-	shift
+	path=$1
+	name=$(basename $path)
 	if app_cloud_exists; then
-		if [ -f $relative_path ]; then
-			cmd="$relative_path $@"
+		shift
+		bin_path=bin/$name
+		if [ -f $bin_path ]; then
+			shift
+			cmd=$bin_path
 		else
-			if [ ! -z "$1" ]; then
-				cmd=$@
-			else
-				cmd=$name
-			fi
+			cmd=$name
 		fi
-		cloud_exec -- $cmd
+		cloud_exec -- $cmd $@
 	else
-		$(which -a $name | grep -A 1 $full_path | tail -n 1) $@
+		alt=$(which -a $name | grep -A 1 $path | tail -n 1)
+		if [ -z "$alt" ]; then
+			error "No alternative found for \`$name\`"
+		else
+			$alt $@
+		fi
 	fi
 }
 
