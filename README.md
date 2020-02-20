@@ -227,7 +227,9 @@ New security measures has been added into Catalina, so you need to manually add 
 
 ## Credits
 
-It's sponsored by:
+This gem is funded and maintained by [mmontossi](https://github.com/mmontossi).
+
+With the sponsorship of:
 
 [![Occam Logo](https://www.occam.global/wp-content/uploads/2018/01/Occam_V1_170px.png)](https://www.occam.global)
 
