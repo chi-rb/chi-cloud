@@ -1,0 +1,2 @@
+redis_repo=redis:5.0
+redis_pod_port=6379

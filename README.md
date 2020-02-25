@@ -26,6 +26,8 @@ Virtual machine cpus: 4
 
 The host administration password will be requested to complete the installation.
 
+You will also be asked for your hub.docker.com account credentials for storing the cloud docker images.
+
 ## How to uninstall?
 
 To completely uninstall cloud and the associated VM:
@@ -166,20 +168,6 @@ Or any other:
 cloud exec mysql -- mysqldump
 ```
 
-### Console
-
-Attaches to Rails console:
-```
-cloud console
-```
-
-### Rails
-
-Executes Rails command:
-```
-cloud rails db:migrate
-```
-
 ### Open
 
 Opens browser pointing to app:
@@ -197,6 +185,13 @@ cloud log
 Or any other:
 ```
 cloud log redis
+```
+
+## How to run Rails commands
+
+Add the following to your shell profile. This will map any rails commands to the cloud instance inside the root directory, whilst leaving any additional Ruby management tools (rbenv, RVM etc) intact for other projects.
+```
+export PATH=/usr/local/cloud/bin:$PATH
 ```
 
 ## How to manage the vm?
@@ -260,7 +255,9 @@ New security measures have been added into Catalina, so you need to manually add
 
 ## Credits
 
-Development is sponsored by:
+This gem is funded and maintained by [mmontossi](https://github.com/mmontossi).
+
+With the sponsorship of:
 
 [![Occam Logo](https://www.occam.global/wp-content/uploads/2018/01/Occam_V1_170px.png)](https://www.occam.global)
 

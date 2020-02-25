@@ -37,14 +37,6 @@ spec:
           value: {{ threads }}
         - name: RAILS_WORKERS
           value: '{{ workers }}'
-        - name: DB_HOST
-          value: {{ postgres_host }}
-        - name: DB_PORT
-          value: '{{ postgres_pod_port }}'
-        - name: DB_USER
-          value: {{ postgres_user }}
-        - name: DB_PASS
-          value: '{{ postgres_pass }}'
         - name: REDIS_URL
           value: redis://{{ redis_host }}:{{ redis_pod_port }}
 {{ render rails.mount }}

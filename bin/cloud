@@ -3,10 +3,15 @@
 hosts_path=/etc/hosts
 bin_path=/usr/local/bin
 cloud_path=$bin_path/cloud
-agent_name=com.cloud.plist
 rails_pod=rails
 
-tmp_path=/tmp
+agent_name=com.cloud
+agent_filename=$agent_name.plist
+
+tmp_path=/tmp/chi-cloud
+tmp_repo_path=$tmp_path/repo
+tmp_base_path=$tmp_path/base
+tmp_cloud_path=$tmp_base_path/cloud
 tmp_conf_path=$tmp_path/conf
 
 exports_path=/etc/exports
@@ -18,49 +23,20 @@ s3_vmlinuz_url=$s3_url/vmlinuz
 s3_disk_url=$s3_url/disk.img.xz
 
 repo_path=/usr/local/cloud
-repo_tmp_path=/tmp/chi-cloud
 repo_app_path=$repo_path/app
-repo_app_cloud_path=$repo_app_path/cloud
+repo_base_path=$repo_app_path/base
 repo_vm_path=$repo_path/vm
 repo_initrd_path=$repo_vm_path/initrd
 repo_vmlinuz_path=$repo_vm_path/vmlinuz
 repo_disk_path=$repo_vm_path/disk.img.xz
 repo_bin_path=$repo_path/bin
 repo_xhyve_path=$repo_bin_path/xhyve
-repo_cloud_path=$repo_bin_path/cloud
 
 user_cloud_path=$HOME/.cloud
 user_conf_path=$user_cloud_path/conf
 user_auth_path=$user_cloud_path/auth.json
 user_disk_path=$user_cloud_path/disk.img
-user_agent_path=$HOME/Library/LaunchAgents/$agent_name
-
-if ([ $1 = init ] || [ $1 = destroy ]) && [ ! -z $2 ]; then
-	app_path=$(cd $2; pwd)
-else
-	app_path=$PWD
-fi
-app_cloud_path=$app_path/cloud
-app_tmp_path=$app_path/tmp/cloud
-app_apply_path=$app_tmp_path/apply
-app_secret_path=$app_apply_path/secret.yml
-app_namespace_path=$app_apply_path/namespace.yml
-app_kustomization_path=$app_apply_path/kustomization.yml
-app_envs_path=$app_cloud_path/envs
-app_base_path=$app_envs_path/base
-app_dev_path=$app_envs_path/development
-app_prod_path=$app_envs_path/production
-app_build_path=$app_cloud_path/build
-app_deploy_path=$app_cloud_path/deploy
-app_snippets_path=$app_deploy_path/snippets
-app_samples_path=$app_tmp_path/samples
-app_sample_paths=(
-	config/puma.rb
-	config/database.yml
-	config/cable.yml
-	test/test_helper.rb
-	test/application_system_test_case.rb
-)
+user_agent_path=$HOME/Library/LaunchAgents/$agent_filename
 
 vm_user=hacker
 vm_name=cloud
@@ -70,11 +46,15 @@ vm_cpus=4
 k3s_latest_url=https://github.com/rancher/k3s/releases/latest
 k3s_path=/usr/local/bin/k3s
 
-conf_names=(
+net_setting_names=(
+	mac_ip
+	vm_ip
+)
+user_setting_names=(
 	vm_mem
 	vm_cpus
 )
-conf_descs=(
+user_setting_descs=(
 	'Virtual machine memory'
 	'Virtual machine cpus'
 )
@@ -119,19 +99,52 @@ gen_id() {
 	echo $(uuidgen | tr '[:upper:]' '[:lower:]')
 }
 
+set_app_paths() {
+	if [ ! -z "$1" ]; then
+		if [ ${1:0:1} = / ]; then
+			app_path=$1
+		else
+			app_path=$PWD/$1
+		fi
+	else
+		app_path=$PWD
+	fi
+	app_cloud_path=$app_path/cloud
+	app_tmp_path=$app_path/tmp/cloud
+	app_apply_path=$app_tmp_path/apply
+	app_secret_path=$app_apply_path/secret.yml
+	app_namespace_path=$app_apply_path/namespace.yml
+	app_kustomization_path=$app_apply_path/kustomization.yml
+	app_envs_path=$app_cloud_path/envs
+	app_base_path=$app_envs_path/base
+	app_dev_path=$app_envs_path/development
+	app_prod_path=$app_envs_path/production
+	app_build_path=$app_cloud_path/build
+	app_deploy_path=$app_cloud_path/deploy
+	app_snippets_path=$app_deploy_path/snippets
+	app_samples_path=$app_tmp_path/samples
+	app_sample_paths=(
+		config/puma.rb
+		config/database.yml
+		config/cable.yml
+		test/test_helper.rb
+		test/application_system_test_case.rb
+	)
+}
+
 configure() {
-	indexes=${!conf_names[@]}
+	indexes=${!user_setting_names[@]}
 	for i in $indexes; do
-		desc=${conf_descs[$i]}
-		value=${!conf_names[$i]}
+		desc=${user_setting_descs[$i]}
+		value=${!user_setting_names[$i]}
 		echo $desc: $value
 	done
 	if ! correct; then
 		echo
 		for i in $indexes; do
-			desc=${conf_descs[$i]}
-			name=${conf_names[$i]}
-			value=${!conf_names[$i]}
+			desc=${user_setting_descs[$i]}
+			name=${user_setting_names[$i]}
+			value=${!user_setting_names[$i]}
 			echo $desc: $value
 			if ! correct; then
 				echo "Enter new value: \c"
@@ -139,11 +152,11 @@ configure() {
 			fi
 			echo
 		done
-		rm -f $user_conf_path
 		touch $user_conf_path
 		for i in $indexes; do
-			name=${conf_names[$i]}
-			value=${!conf_names[$i]}
+			name=${user_setting_names[$i]}
+			value=${!user_setting_names[$i]}
+			sudo sed -i '' "/$name/d" $user_conf_path
 			echo $name=$value >> $user_conf_path
 		done
 		configure
@@ -157,8 +170,21 @@ authorize() {
 	read -s auth_pass
 }
 
-vm_exists() {
-	test ! -z $vm_ip
+net_settings_exists() {
+	if [ -f $user_conf_path ]; then
+		for name in ${net_setting_names[@]}; do
+			if cat $user_conf_path | grep $name >/dev/null 2>&1; then
+				return 0
+			fi
+		done
+		return 1
+	else
+		return 1
+	fi
+}
+
+vm_running() {
+	sudo launchctl list | grep $agent_name >/dev/null 2>&1
 }
 
 host_exists() {
@@ -166,17 +192,30 @@ host_exists() {
 }
 
 export_exists() {
-	test -f $exports_path && sudo grep $exports_home_path $exports_path > /dev/null 2>&1
+	test -f $exports_path && sudo grep $exports_home_path $exports_path >/dev/null 2>&1
 }
 
 vm_ssh() {
 	ssh -tq \
+	-o 'ConnectTimeout=10' \
 	-o 'ControlMaster=auto' \
 	-o 'ControlPersist=600' \
 	-o 'ControlPath=/tmp/%r@%h' \
 	-o 'UserKnownHostsFile=/dev/null' \
 	-o 'StrictHostKeyChecking=no' \
 	$vm_user@$vm_name $@
+}
+
+wait_ssh() {
+	while :; do
+		vm_ssh exit
+		if [ $? -eq 0 ]; then
+			break
+		else
+			echo Waiting ssh to be ready
+			sleep 30
+		fi
+	done
 }
 
 vm_kubectl() {
@@ -206,7 +245,8 @@ app_cloud_exists() {
 }
 
 load_app() {
-	app_env_name=${1:-development}
+	set_app_paths
+	app_env_name=${RAILS_ENV:-development}
 	app_env=$app_env_name
 	ensure_app_env $app_env_name
 	. "$app_base_path"
@@ -221,7 +261,9 @@ ensure_app() {
 }
 
 unknown() {
-	echo Unknown command \`$1\`
+	if [ ! -z $1 ]; then
+		echo "Unknown command \`$1\` \n"
+	fi
 }
 
 app_env_exists() {
@@ -350,7 +392,7 @@ compile_statics() {
 	YML
 	escaped_app_apply_path=$(echo "$app_apply_path/" | sed 's/\//\\\//g')
 	resources=$(find "$app_apply_path" -name '*.yml' | sed "s/$escaped_app_apply_path//g" | sed 's/^/  - /g')
-  cat <<-YML > "$app_kustomization_path"
+	cat <<-YML > "$app_kustomization_path"
 		namespace: $app_id
 		resources:
 		$resources
@@ -371,23 +413,343 @@ edit() {
 	fi
 }
 
-if [ -f $user_conf_path ]; then
-	. $user_conf_path
-fi
+fallback_pod() {
+	echo ${1:-$rails_pod}
+}
 
-case $1 in
-install)
-
-	begin Choosing Configuration
-	mkdir $user_cloud_path
-	configure
-
+cloud_install() {
 	if [ ! -d $repo_path ]; then
 		begin Cloning Repository
-		git clone git@github.com:chi-rb/chi-cloud.git $repo_tmp_path
-		sudo mv $repo_tmp_path $repo_path
-		sudo ln -s $repo_cloud_path $cloud_path
+		mkdir -p $tmp_path
+		git clone git@github.com:chi-rb/chi-cloud.git $tmp_repo_path
+		sudo mv $tmp_repo_path $repo_path
+	fi
 
+	vm_install nested
+
+	if [ ! -f $user_auth_path ]; then
+		begin Authorizing hub.docker.com
+		authorize
+		cat <<-JSON > $user_auth_path
+			{
+			  "auths": {
+			    "https://index.docker.io/v1/": {
+			      "auth": "$(echo "$auth_user:$auth_pass\c" | base64)"
+			    }
+			  }
+			}
+		JSON
+	fi
+
+	if [ "$(which ruby)" != /usr/local/cloud/bin/ruby ]; then
+		cat <<-DOC
+			Add this into your shell rc file:
+			PATH=/usr/local/cloud/bin:$PATH
+
+			And then:
+			. /shell-rc-path
+		DOC
+	fi
+
+	complete
+}
+
+cloud_uninstall() {
+	vm_uninstall nested
+
+	if [ -d $user_cloud_path ]; then
+		begin Removing Settings
+		rm -rf $user_cloud_path
+	fi
+
+	if [ -d $repo_path ]; then
+		begin Removing Cloud
+		sudo rm -rf $repo_path
+	fi
+
+	complete
+}
+
+cloud_update() {
+	begin Updating Repository
+	current_path=$PWD
+	cd $repo_path
+	git pull
+	repo_current_branch=$(git branch | cut -d ' ' -f2)
+	repo_new_branch=${2:-master}
+	if [ $repo_current_branch != $repo_new_branch ]; then
+		git checkout $repo_new_branch
+	fi
+	cd "$current_path"
+
+	complete
+}
+
+cloud_init() {
+	db=postgres
+	while getopts 'd:' o; do
+		case "$o" in
+		d)
+			db=$OPTARG
+			if [ "$db" != postgres ] && [ "$db" != mysql ]; then
+				error Unknown database $db
+			fi
+		;;
+		esac
+	done
+	shift $((OPTIND-1))
+
+	set_app_paths "$@"
+
+	if ! app_cloud_exists; then
+		begin Using $db template
+		mkdir -p $tmp_path
+		rm -rf $tmp_base_path
+		cp -r $repo_base_path $tmp_base_path
+		patch_name=$db.patch
+		patch_path=$tmp_path/$patch_name
+		cp $repo_app_path/$patch_name $tmp_path
+		patch -s -p0 -d $tmp_path < $patch_path
+		rm $patch_path
+
+		if [ ! -d "$app_path" ]; then
+			begin Generating App Directory
+			mkdir -p "$(dirname "$app_path")"
+			mv $tmp_base_path "$app_path"
+			git init "$app_path"
+			note=false
+		else
+			begin Adding Cloud Directory
+			mv $tmp_cloud_path "$app_cloud_path"
+			mkdir -p "$app_samples_path"
+			for sample_path in "${app_sample_paths[@]}"; do
+				destination_path=$app_samples_path/$sample_path
+				mkdir -p "$(dirname "$destination_path")"
+				cp $tmp_base_path/$sample_path "$destination_path"
+			done
+			rm -rf $tmp_base_path
+			note=true
+		fi
+	else
+		error Already initialized
+	fi
+
+	begin Setting Application
+	echo "Enter name: \c"
+	read	app_name
+	echo "app_name=$app_name" >> "$app_base_path"
+	echo "Enter port: \c"
+	read	rails_cluster_port
+	echo "rails_cluster_port=$rails_cluster_port" >> "$app_dev_path"
+
+	begin Setting Docker Repository
+	echo "Enter rails repo: \c"
+	read rails_repo
+	echo "rails_repo=$rails_repo:\$app_env" >> "$app_base_path"
+
+	complete
+
+	if [ $note = true ]; then
+		echo "\nNOTE: You might need to tweak a few files, try using tmp/cloud/samples as a guideline"
+	fi
+}
+
+cloud_open() {
+	load_app
+	open "http://$vm_name:$rails_cluster_port"
+}
+
+cloud_bin() {
+	set_app_paths
+	path=$1
+	name=$(basename $path)
+	if app_cloud_exists; then
+		shift
+		bin_path=bin/$name
+		if [ -f $bin_path ]; then
+			shift
+			cmd=$bin_path
+		else
+			cmd=$name
+		fi
+		cloud_exec -- $cmd $@
+	else
+		alt=$(which -a $name | grep -A 1 $path | tail -n 1)
+		if [ -z "$alt" ]; then
+			error "No alternative found for \`$name\`"
+		else
+			$alt $@
+		fi
+	fi
+}
+
+cloud_destroy() {
+	load_app
+
+	begin Removing Namespace
+	vm_kubectl delete namespace $app_id
+
+	begin Removing Cloud Directory
+	rm -rf "$app_cloud_path"
+
+	complete
+}
+
+cloud_build() {
+	load_app
+	build_names=$(app_kubectl get pods --no-headers=true | awk '/-build/{ORS=" "; print $1}')
+	if [ ! -z $build_names ]; then
+		app_kubectl delete pods $build_names
+	fi
+	compile_all build
+	vm_kubectl apply -k \"$app_apply_path\"
+	ok
+
+	echo "\nUse \`cloud log <pod-name>\` to see logs"
+}
+
+cloud_deploy() {
+	load_app
+	compile_all deploy
+	vm_kubectl apply -k \"$app_apply_path\"
+}
+
+cloud_undeploy() {
+	load_app
+	app_kubectl delete --all deployments
+}
+
+cloud_restart() {
+	load_app
+	pod=$(fallback_pod $1)
+	app_kubectl delete pod $(find_pod $pod)
+}
+
+cloud_shell() {
+	load_app
+	pod=$(fallback_pod $1)
+	pod_exec $pod /bin/bash
+}
+
+cloud_attach() {
+	load_app
+	pod=$(fallback_pod $1)
+	app_kubectl attach -it $(find_pod $pod)
+}
+
+cloud_tunnel() {
+	load_app
+	port=$(app_kubectl get service $1 --no-headers=true | awk '{ print $5 }' | sed 's/\/.*//')
+	app_kubectl port-forward $(find_pod $1) $port:$port
+}
+
+cloud_exec() {
+	load_app
+	if [ $# -gt 2 ] && [ "$2" = -- ]; then
+		pod=$1
+		shift 2
+	elif [ $# -gt 1 ] && [ "$1" = -- ]; then
+		shift
+	else
+		error Wrong format
+	fi
+	pod=$(fallback_pod $pod)
+	pod_exec $pod $@
+}
+
+cloud_status() {
+	load_app
+	if [ -z "$1" ]; then
+		app_kubectl get pods
+	else
+		pod=$(fallback_pod $1)
+		app_kubectl describe pod $(find_pod $pod)
+	fi
+}
+
+cloud_log() {
+	load_app
+	pod=$(fallback_pod $1)
+	app_kubectl logs -f $(find_pod $pod)
+}
+
+cloud_help() {
+	unknown $1
+	cat <<-DOC
+		Usage: cloud <command> [options]
+		Orchestrates Rails+Kubernetes Clouds.
+
+		Available commands:
+			install       Setups script
+			uninstall     Unsetups script
+			reinstall     Installs and uninstalls
+			update [tag]  Updates script
+			init [path]   Generates folder and initializes cloud
+			destroy       Removes cloud folder and destroy cloud
+			build         Builds docker images
+			deploy        Deploys app into the cloud
+			undeploy      Undeploys app from the cloud
+			status [pod]  Prints status of pods (all by default)
+			restart [pod] Restart pod (rails by default)
+			shell [pod]   Opens bash shell in pod (rails by default)
+			attach [pod]  Attachs into first process of pod (rails by default)
+			tunnel pod    Creates temporary tunnel into pod
+			exec [pod]    Executes shell command in pod (rails by default)
+			open          Opens browser pointing to app
+			log [pod]     Tails pod log (rails by default)
+			envs          Manages environments
+			vm            Manages virtual machine
+			help          Prints documentation
+	DOC
+}
+
+envs_list() {
+	ensure_app
+	list=$(ls -1 "$app_envs_path")
+	if [ -z "$list" ]; then
+		error No environments found
+	else
+		echo "$list"
+	fi
+}
+
+envs_add() {
+	ensure_app
+	if app_env_exists $1; then
+		error Environment $1 already exists
+	else
+		mkdir -p "$app_envs_path"
+		touch "$app_env_path"
+		cloud envs edit $1
+	fi
+}
+
+envs_edit() {
+	ensure_app_env $1
+	edit "$app_env_path"
+}
+
+envs_remove() {
+	ensure_app_env $1
+	rm -f "$app_env_path"
+}
+
+envs_help() {
+	unknown $1
+	cat <<-DOC
+		Usage: cloud envs <command> [options]
+
+		Available commands:
+			list          Lists envs
+			add           Adds env
+			edit          Edits env
+			remove        Removes env
+			help          Prints documentation
+	DOC
+}
+
+vm_install() {
+	if [ ! -d $repo_vm_path ]; then
 		begin Dowloading Images
 		mkdir $repo_vm_path
 		curl -o $repo_initrd_path $s3_initrd_url
@@ -395,43 +757,31 @@ install)
 		curl -o $repo_disk_path $s3_disk_url
 	fi
 
-	if ! vm_exists; then
-		begin Creating Virtual Machine
-		tar xJvf $repo_disk_path -C $user_cloud_path
+	if [ ! -f $user_agent_path ]; then
 		vm_id=$(gen_id)
-		cat <<-XML | sudo tee $user_agent_path >/dev/null
-			<?xml version="1.0" encoding="UTF-8"?>
-			<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-			<plist version="1.0">
-				<dict>
-					<key>Label</key>
-					<string>com.cloud</string>
-					<key>ProgramArguments</key>
-					<array>
-						<string>$repo_xhyve_path</string>
-						<string>-A</string>
-						<string>-U</string>
-						<string>$vm_id</string>
-						<string>-c</string>
-						<string>$vm_cpus</string>
-						<string>-m</string>
-						<string>$vm_mem</string>
-						<string>-s</string>
-						<string>0,hostbridge</string>
-						<string>-s</string>
-						<string>2,virtio-net</string>
-						<string>-s</string>
-						<string>4,virtio-blk,$user_disk_path</string>
-						<string>-f</string>
-						<string>kexec,$repo_vmlinuz_path,$repo_initrd_path,root=/dev/vda1 ro</string>
-					</array>
-					<key>RunAtLoad</key>
-					<true/>
-				</dict>
-			</plist>
-		XML
-		cloud vm start
-		nc -l 1234 > $tmp_conf_path
+		mkdir -p $user_cloud_path
+		echo "vm_id=$vm_id" >> $user_conf_path
+		vm_config nested
+	fi
+
+	if [ ! -f $user_disk_path ]; then
+		begin Creating Disk
+		tar xJvf $repo_disk_path -C $user_cloud_path
+	fi
+
+	if ! net_settings_exists; then
+		begin First Boot
+		while :; do
+			echo Waiting to receive ip
+			cloud vm start
+			mkdir -p $tmp_path
+			nc -l 1234 > $tmp_conf_path & sleep 30; kill $! >/dev/null 2>&1
+			if [ -z "$(cat $tmp_conf_path)" ]; then
+				vm_stop
+			else
+				break
+			fi
+		done
 		. $tmp_conf_path
 		cat $tmp_conf_path >> $user_conf_path
 		rm $tmp_conf_path
@@ -446,6 +796,7 @@ install)
 		begin Sharing Home Directory
 		echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
 		sudo nfsd update
+		wait_ssh
 		vm_ssh sudo sh <<-SSH
 			echo "$mac_ip:$exports_home_path\t$HOME\tnfs local_lock=all\t0 0" >> /etc/fstab
 			mkdir -p $HOME
@@ -453,27 +804,35 @@ install)
 		SSH
 	fi
 
-	begin Authorizing hub.docker.com
-	authorize
-	cat <<-JSON > $user_auth_path
-		{
-		  "auths": {
-		    "https://index.docker.io/v1/": {
-		      "auth": "$(echo "$auth_user:$auth_pass\c" | base64)"
-		    }
-		  }
-		}
-	JSON
+	if [ "$1" != nested ]; then
+		complete
+	fi
+}
 
-	complete
-
-;;
-uninstall)
+vm_uninstall() {
+	if vm_running; then
+		begin Stopping Virtual Machine
+		vm_stop
+	fi
 
 	if [ -f $user_agent_path ]; then
 		begin Removing Agent
-		sudo launchctl unload -w $user_agent_path
 		sudo rm $user_agent_path
+	fi
+
+	if [ "$1" != nested ]; then
+		if net_settings_exists; then
+			begin Removing Network Settings
+			for name in ${net_setting_names[@]}; do
+				sudo sed -i '' "/$name/d" $user_conf_path
+			done
+		fi
+
+		if [ -d $repo_vm_path ]; then
+			begin Removing Virtual Machine
+			rm -rf $repo_vm_path
+			rm -rf $user_disk_path
+		fi
 	fi
 
 	if host_exists; then
@@ -488,103 +847,164 @@ uninstall)
 		sudo nfsd update
 	fi
 
-	if [ -d $user_cloud_path ]; then
-		begin Removing Settings
-		rm -rf $user_cloud_path
+	if [ "$1" != nested ]; then
+		complete
 	fi
+}
 
-	if [ -d $repo_path ]; then
-		begin Removing Cloud
-		sudo rm -rf $repo_path $cloud_path
+vm_config() {
+	begin Choosing Configuration
+	configure
+
+	begin Installing agent
+	mkdir -p $(dirname $user_agent_path)
+	cat <<-XML | sudo tee $user_agent_path >/dev/null
+		<?xml version="1.0" encoding="UTF-8"?>
+		<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+		<plist version="1.0">
+			<dict>
+				<key>Label</key>
+				<string>com.cloud</string>
+				<key>ProgramArguments</key>
+				<array>
+					<string>$repo_xhyve_path</string>
+					<string>-A</string>
+					<string>-U</string>
+					<string>$vm_id</string>
+					<string>-c</string>
+					<string>$vm_cpus</string>
+					<string>-m</string>
+					<string>$vm_mem</string>
+					<string>-s</string>
+					<string>0,hostbridge</string>
+					<string>-s</string>
+					<string>2,virtio-net</string>
+					<string>-s</string>
+					<string>4,virtio-blk,$user_disk_path</string>
+					<string>-f</string>
+					<string>kexec,$repo_vmlinuz_path,$repo_initrd_path,root=/dev/vda1 ro</string>
+				</array>
+				<key>RunAtLoad</key>
+				<true/>
+			</dict>
+		</plist>
+	XML
+
+	if [ "$1" != nested ]; then
+		vm_restart
+		complete
+	fi
+}
+
+vm_start() {
+	sudo launchctl load -w $user_agent_path >/dev/null
+}
+
+vm_stop() {
+	sudo launchctl unload -w $user_agent_path >/dev/null 2>&1
+	while vm_running; do
+		sleep 5
+	done
+}
+
+vm_restart() {
+	vm_stop
+	vm_start
+}
+
+vm_exec() {
+	if [ $# -gt 1 ] && [ "$1" = -- ]; then
+		shift
+	else
+		error Wrong format
+	fi
+	vm_ssh $@
+}
+
+vm_update() {
+	begin Updating Packages
+	vm_ssh sudo sh <<-SSH
+		apt update
+		DEBIAN_FRONTEND=noninteractive apt upgrade -y
+	SSH
+
+	begin Updating K3S
+	k3s_version_regex='v[0-9]+\.[0-9]+\.[0-9]+\+k3s.?[0-9]+'
+	k3s_current_version=$(vm_ssh k3s -v | grep -oE $k3s_version_regex)
+	k3s_latest_version=$(curl -s $k3s_latest_url | grep -oE $k3s_version_regex | head -n1)
+	if [ -z $k3s_current_version ] || [ $k3s_current_version != $k3s_latest_version ]; then
+		k3s_url="https://github.com/rancher/k3s/releases/download/$k3s_latest_version/k3s"
+		vm_ssh sudo sh <<-SSH
+			systemctl stop k3s
+			curl -Lo $k3s_path $k3s_url
+			chmod +x $k3s_path
+			systemctl start k3s
+		SSH
+	else
+		echo Already up to date
 	fi
 
 	complete
+}
+
+vm_help() {
+	unknown $1
+	cat <<-DOC
+		Usage: cloud vm <command> [options]
+
+		Available commands:
+			install       
+			uninstall     
+			start         Boots virtual machine
+			stop          Halts virtual machine
+			restart       Stops and starts
+			shell         Opens bash shell
+			exec          Executes command
+			update        Updates operating system
+			help          Prints documentation
+	DOC
+}
+
+if [ -f $user_conf_path ]; then
+	. $user_conf_path
+fi
+
+case $1 in
+install)
+
+	cloud_install
 
 ;;
-reinstall)
+uninstall)
 
-	cloud uninstall
-	echo
-	cloud install
+	cloud_uninstall
 
 ;;
 update)
 
-	begin Updating Repository
-	current_path=$PWD
-	cd $repo_path
-	git pull
-	repo_current_branch=$(git branch | cut -d ' ' -f2)
-	repo_new_branch=${2:-master}
-	if [ $repo_current_branch != $repo_new_branch ]; then
-		git checkout $repo_new_branch
-	fi
-	cd "$current_path"
-
-	complete
+	cloud_update
 
 ;;
 init)
 
-	if ! app_cloud_exists; then
-		mkdir -p "$app_path"
-		if [ ! "$(ls -A "$app_path")" ]; then
-			begin Generating App Directory
-			cp -r $repo_app_path/* "$app_path"
-			git init "$app_path"
-			note=false
-		else
-			begin Generating Cloud Directory
-			cp -r $repo_app_cloud_path "$app_cloud_path"
-			mkdir -p "$app_samples_path"
-			for sample_path in "${app_sample_paths[@]}"; do
-				destination_path=$app_samples_path/$sample_path
-				mkdir -p "$(dirname "$destination_path")"
-				cp $repo_app_path/$sample_path "$destination_path"
-			done
-			note=true
-		fi
-
-		begin Setting Application
-		echo "Enter name: \c"
-		read	app_name
-		echo "app_name=$app_name" >> "$app_base_path"
-		echo "Enter port: \c"
-		read	rails_cluster_port
-		echo "rails_cluster_port=$rails_cluster_port" >> "$app_dev_path"
-
-		begin Setting Docker Repository
-		echo "Enter rails repo: \c"
-		read rails_repo
-		echo "rails_repo=$rails_repo:\$app_env" >> "$app_base_path"
-
-		complete
-
-		if [ $note = true ]; then
-			echo "\nNOTE: You might need to tweak a few files, try using tmp/cloud/samples as a guideline"
-		fi
-	else
-		echo Already initialized
-	fi
+	shift
+	cloud_init "$@"
 
 ;;
 open)
 
-	load_app
-	open "http://$vm_name:$rails_cluster_port"
+	cloud_open
 
 ;;
 destroy)
 
-	load_app
+	cloud_destroy
 
-	begin Removing Namespace
-	vm_kubectl delete namespace $app_id
+;;
+bin)
 
-	begin Removing Cloud Directory
-	rm -rf "$app_cloud_path"
-
-	complete
+	shift 
+	cloud_bin $@
 
 ;;
 envs)
@@ -592,58 +1012,32 @@ envs)
 	case $2 in
 	''|list)
 
-		ensure_app
-		list=$(ls -1 "$app_envs_path")
-		if [ -z "$list" ]; then
-			error No environments found
-		else
-			echo "$list"
-		fi
+		envs_list
 
 	;;
 	add)
 
-		ensure_app
-		if app_env_exists $3; then
-			error Environment $3 already exists
-		else
-			mkdir -p "$app_envs_path"
-			touch "$app_env_path"
-			cloud envs edit $3
-		fi
+		envs_add $3
 
 	;;
 	edit)
 
-		ensure_app_env $3
-		edit "$app_env_path"
+		envs_edit $3
 
 	;;
 	remove)
 
-		ensure_app_env $3
-		rm -f "$app_env_path"
+		envs_remove $3
 
 	;;
 	help)
 
-		cat <<-DOC
-			Usage: cloud envs <command> [options]
-
-			Available commands:
-			  list          Lists envs
-			  add           Adds env
-			  edit          Edits env
-			  remove        Removes env
-			  help          Prints documentation
-		DOC
+		envs_help
 
 	;;
 	*)
 
-		unknown $2
-		echo
-		cloud envs help
+		envs_help $1
 
 	;;
 	esac
@@ -651,121 +1045,86 @@ envs)
 ;;
 build)
 
-	load_app
-	build_names=$(app_kubectl get pods --no-headers=true | awk '/-build/{ORS=" "; print $1}')
-	if [ ! -z $build_names ]; then
-		app_kubectl delete pods $build_names
-	fi
-	compile_all build
-	vm_kubectl apply -k \"$app_apply_path\"
-	ok
-
-	echo "\nUse \`cloud log <pod-name>\` to see logs"
+	cloud_build
 
 ;;
 deploy)
 
-	load_app
-	compile_all deploy
-	vm_kubectl apply -k \"$app_apply_path\"
+	cloud_deploy
 
 ;;
 undeploy)
 
-	load_app
-	app_kubectl delete --all deployments
+	cloud_undeploy
 
 ;;
 restart)
 
-	load_app
-	app_kubectl delete pod $(find_pod ${2:-$rails_pod})
-
-;;
-console)
-
-	load_app
-	pod_exec $rails_pod bin/rails c
-
-;;
-rails)
-
-	load_app
-	shift 1
-	pod_exec $rails_pod bin/rails $@
+	cloud_restart $2
 
 ;;
 shell)
 
-	load_app
-	pod_exec ${2:-$rails_pod} /bin/bash
+	cloud_shell $2
 
 ;;
 attach)
 
-	load_app
-	app_kubectl attach -it $(find_pod ${2:-$rails_pod})
+	cloud_attach $2
 
 ;;
 tunnel)
 
-	load_app
-	port=$(app_kubectl get service $2 --no-headers=true | awk '{ print $5 }' | sed 's/\/.*//')
-	app_kubectl port-forward $(find_pod $2) $port:$port
+	cloud_tunnel $2
 
 ;;
 exec)
 
-	load_app
 	shift
-	if [ $# -gt 2 ] && [ "$2" = -- ]; then
-		name=$1
-		shift 2
-	elif [ $# -gt 1 ] && [ "$1" = -- ]; then
-		name=$rails_pod
-		shift
-	else
-		error Wrong format
-	fi
-	pod_exec $name $@
+	cloud_exec $@
 
 ;;
 status)
 
-	load_app
-	case $2 in
-	'')
-		app_kubectl get pods
-	;;
-	*)
-		app_kubectl describe pod $(find_pod ${2:-$rails_pod})
-	;;
-	esac
+	cloud_status $2
 
 ;;
 log)
 
-	load_app
-	app_kubectl logs -f $(find_pod ${2:-$rails_pod})
+	cloud_log $2
 
 ;;
 vm)
 
 	case $2 in
+	install)
+
+		vm_install
+
+	;;
+	uninstall)
+
+		vm_uninstall
+
+	;;
+	config)
+
+		vm_config
+
+	;;
 	start)
 
-		sudo launchctl load -w $user_agent_path
+		vm_start
 
 	;;
 	stop)
 
-		sudo launchctl unload -w $user_agent_path
+		vm_stop
 
 	;;
 	restart)
 
-		cloud vm stop
-		cloud vm start
+		vm_restart
 
 	;;
 	shell)
@@ -776,62 +1135,22 @@ vm)
 	exec)
 
 		shift 2
-		if [ $# -gt 1 ] && [ "$1" = -- ]; then
-			shift
-		else
-			error Wrong format
-		fi
-		vm_ssh $@
+		vm_exec $@
 
 	;;
 	update)
 
-		begin Updating Packages
-		vm_ssh sudo sh <<-SSH
-			apt update
-			DEBIAN_FRONTEND=noninteractive apt upgrade -y
-		SSH
-
-		begin Updating K3S
-		k3s_version_regex='v[0-9]+\.[0-9]+\.[0-9]+\+k3s.?[0-9]+'
-		k3s_current_version=$(vm_ssh k3s -v | grep -oE $k3s_version_regex)
-		k3s_latest_version=$(curl -s $k3s_latest_url | grep -oE $k3s_version_regex | head -n1)
-		if [ -z $k3s_current_version ] || [ $k3s_current_version != $k3s_latest_version ]; then
-			k3s_url="https://github.com/rancher/k3s/releases/download/$k3s_latest_version/k3s"
-			vm_ssh sudo sh <<-SSH
-				systemctl stop k3s
-				curl -Lo $k3s_path $k3s_url
-				chmod +x $k3s_path
-				systemctl start k3s
-			SSH
-		else
-			echo Already up to date
-		fi
-
-		complete
+		vm_update
 
 	;;
 	help)
 
-		cat <<-DOC
-			Usage: cloud vm <command> [options]
-
-			Available commands:
-			  start         Boots virtual machine
-			  stop          Halts virtual machine
-			  restart       Stops and starts
-			  shell         Opens bash shell
-			  exec          Executes command
-			  update        Updates operating system
-			  help          Prints documentation
-		DOC
+		vm_help
 
 	;;
 	*)
 
-		unknown $2
-		echo
-		cloud vm help
+		vm_help $2
 
 	;;
 	esac
@@ -839,41 +1158,12 @@ vm)
 ;;
 help)
 
-	cat <<-DOC
-		Usage: cloud <command> [options]
-		Orchestrates Rails+Kubernetes Clouds.
-
-		Available commands:
-		  install       Setups script
-		  uninstall     Unsetups script
-		  reinstall     Installs and uninstalls
-		  update [tag]  Updates script
-		  init [path]   Generates folder and initializes cloud
-		  destroy       Removes cloud folder and destroy cloud
-		  build         Builds docker images
-		  deploy        Deploys app into the cloud
-		  undeploy      Undeploys app from the cloud
-		  status [pod]  Prints status of pods (all by default)
-		  restart [pod] Restart pod (rails by default)
-		  shell [pod]   Opens bash shell in pod (rails by default)
-		  attach [pod]  Attachs into first process of pod (rails by default)
-		  tunnel pod    Creates temporary tunnel into pod
-		  exec [pod]    Executes shell command in pod (rails by default)
-		  console       Attachs to rails console
-		  rails         Executes rails command
-		  open          Opens browser pointing to app
-		  log [pod]     Tails pod log (rails by default)
-		  envs          Manages environments
-		  vm            Manages virtual machine
-		  help          Prints documentation
-	DOC
+	cloud_help
 
 ;;
 *)
 
-	unknown $1
-	echo
-	cloud help
+	cloud_help $1
 
 ;;
 esac

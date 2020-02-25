@@ -1,5 +1,4 @@
 default: &default
-  adapter: postgresql
   pool: <%= ENV['RAILS_THREADS'].split(':').last %>
   host: <%= ENV['DB_HOST'] %>
   port: <%= ENV['DB_PORT'] %>

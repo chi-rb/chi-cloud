@@ -1,0 +1,102 @@
+diff -ruN base/Gemfile mysql/Gemfile
+--- base/Gemfile	2020-02-14 11:13:17.000000000 -0300
++++ mysql/Gemfile	2020-02-15 19:15:57.000000000 -0300
+@@ -2,6 +2,7 @@
+ 
+ gem 'rails', '~> 5.2'
+ gem 'bootsnap', require: false
++gem 'mysql2'
+ gem 'sass-rails'
+ gem 'uglifier'
+ gem 'turbolinks'
+diff -ruN base/cloud/deploy/base/mysql.yml mysql/cloud/deploy/base/mysql.yml
+--- base/cloud/deploy/base/mysql.yml	1969-12-31 21:00:00.000000000 -0300
++++ mysql/cloud/deploy/base/mysql.yml	2020-02-15 19:31:13.000000000 -0300
+@@ -0,0 +1,36 @@
++{{ render local.claim }}
++---
++{{ render pod.service }}
++---
++apiVersion: apps/v1
++kind: Deployment
++metadata: 
++  name: {{ name }}
++  labels:
++    name: {{ name }}
++spec:   
++  strategy:
++    type: {{ strategy }}
++  selector:
++    matchLabels:
++      name: {{ name }}
++  template:
++    metadata:
++      labels:
++        name: {{ name }}
++    spec:
++      containers:
++      - image: {{ repo }}
++        name: {{ name }}
++        env:
++        - name: MYSQL_ROOT_PASSWORD
++          value: '{{ pass }}'
++        - name: MYSQL_DATABASE
++          value: '{{ db }}'
++        volumeMounts:
++        - mountPath: /var/lib/mysql
++          name: {{ name }}
++      volumes:
++      - name: {{ name }}
++        persistentVolumeClaim:
++          claimName: {{ name }}
+diff -ruN base/cloud/deploy/development/rails.yml mysql/cloud/deploy/development/rails.yml
+--- base/cloud/deploy/development/rails.yml	2020-02-14 11:29:10.000000000 -0300
++++ mysql/cloud/deploy/development/rails.yml	2020-02-15 19:30:10.000000000 -0300
+@@ -37,6 +37,14 @@
+           value: {{ threads }}
+         - name: RAILS_WORKERS
+           value: '{{ workers }}'
++        - name: DB_HOST
++          value: '{{ mysql_host }}'
++        - name: DB_PORT
++          value: '{{ mysql_pod_port }}'
++        - name: DB_USER
++          value: '{{ mysql_user }}'
++        - name: DB_PASS
++          value: '{{ mysql_pass }}'
+         - name: REDIS_URL
+           value: redis://{{ redis_host }}:{{ redis_pod_port }}
+ {{ render rails.mount }}
+diff -ruN base/cloud/envs/base mysql/cloud/envs/base
+--- base/cloud/envs/base	2020-02-14 11:29:47.000000000 -0300
++++ mysql/cloud/envs/base	2020-02-15 19:17:57.000000000 -0300
+@@ -1,2 +1,5 @@
+ redis_repo=redis:5.0
+ redis_pod_port=6379
++
++mysql_repo=mysql:5.7
++mysql_pod_port=3306
+diff -ruN base/cloud/envs/development mysql/cloud/envs/development
+--- base/cloud/envs/development	2020-02-14 11:29:43.000000000 -0300
++++ mysql/cloud/envs/development	2020-02-15 19:18:49.000000000 -0300
+@@ -3,6 +3,11 @@
+ 
+ redis_storage=200Mi
+ 
++mysql_storage=1Gi
++mysql_user=root
++mysql_pass=1234
++mysql_db=$app_env
++
+ rails_threads=1:1
+ rails_workers=1
+ rails_pod_port=80
+diff -ruN base/config/database.yml mysql/config/database.yml
+--- base/config/database.yml	2020-02-14 11:15:34.000000000 -0300
++++ mysql/config/database.yml	2020-02-15 19:15:19.000000000 -0300
+@@ -1,4 +1,5 @@
+ default: &default
++  adapter: mysql2
+   pool: <%= ENV['RAILS_THREADS'].split(':').last %>
+   host: <%= ENV['DB_HOST'] %>
+   port: <%= ENV['DB_PORT'] %>

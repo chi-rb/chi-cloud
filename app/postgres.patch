@@ -1,0 +1,104 @@
+diff -ruN base/Gemfile postgres/Gemfile
+--- base/Gemfile	2020-02-14 11:13:17.000000000 -0300
++++ postgres/Gemfile	2020-02-14 11:00:28.000000000 -0300
+@@ -2,6 +2,7 @@
+ 
+ gem 'rails', '~> 5.2'
+ gem 'bootsnap', require: false
++gem 'pg'
+ gem 'sass-rails'
+ gem 'uglifier'
+ gem 'turbolinks'
+diff -ruN base/cloud/deploy/base/postgres.yml postgres/cloud/deploy/base/postgres.yml
+--- base/cloud/deploy/base/postgres.yml	1969-12-31 21:00:00.000000000 -0300
++++ postgres/cloud/deploy/base/postgres.yml	2020-02-14 11:00:28.000000000 -0300
+@@ -0,0 +1,38 @@
++{{ render local.claim }}
++---
++{{ render pod.service }}
++--- 
++apiVersion: apps/v1
++kind: Deployment
++metadata:
++  name: {{ name }}
++  labels:
++    name: {{ name }}
++spec:
++  strategy:
++    type: {{ strategy }}
++  selector:
++    matchLabels:
++      name: {{ name }}
++  template:
++    metadata:
++      labels:
++        name: {{ name }}
++    spec:
++      containers:
++      - image: {{ repo }}
++        name: {{ name }}
++        env:
++        - name: POSTGRES_USER
++          value: {{ user }}
++        - name: POSTGRES_PASSWORD
++          value: '{{ pass }}'
++        - name: POSTGRES_DB
++          value: {{ db }}
++        volumeMounts:
++        - mountPath: /var/lib/postgresql/data
++          name: {{ name }}
++      volumes:
++      - name: {{ name }}
++        persistentVolumeClaim:
++          claimName: {{ name }}
+diff -ruN base/cloud/deploy/development/rails.yml postgres/cloud/deploy/development/rails.yml
+--- base/cloud/deploy/development/rails.yml	2020-02-14 11:29:10.000000000 -0300
++++ postgres/cloud/deploy/development/rails.yml	2020-02-14 11:00:28.000000000 -0300
+@@ -37,6 +37,14 @@
+           value: {{ threads }}
+         - name: RAILS_WORKERS
+           value: '{{ workers }}'
++        - name: DB_HOST
++          value: {{ postgres_host }}
++        - name: DB_PORT
++          value: '{{ postgres_pod_port }}'
++        - name: DB_USER
++          value: {{ postgres_user }}
++        - name: DB_PASS
++          value: '{{ postgres_pass }}'
+         - name: REDIS_URL
+           value: redis://{{ redis_host }}:{{ redis_pod_port }}
+ {{ render rails.mount }}
+diff -ruN base/cloud/envs/base postgres/cloud/envs/base
+--- base/cloud/envs/base	2020-02-14 11:29:47.000000000 -0300
++++ postgres/cloud/envs/base	2020-02-14 11:00:28.000000000 -0300
+@@ -1,2 +1,5 @@
+ redis_repo=redis:5.0
+ redis_pod_port=6379
++ 
++postgres_repo=postgres:12.1
++postgres_pod_port=5432
+diff -ruN base/cloud/envs/development postgres/cloud/envs/development
+--- base/cloud/envs/development	2020-02-14 11:29:43.000000000 -0300
++++ postgres/cloud/envs/development	2020-02-14 11:00:28.000000000 -0300
+@@ -3,6 +3,11 @@
+ 
+ redis_storage=200Mi
+ 
++postgres_storage=1Gi
++postgres_user=rails
++postgres_pass=1234
++postgres_db=$app_env
++
+ rails_threads=1:1
+ rails_workers=1
+ rails_pod_port=80
+diff -ruN base/config/database.yml postgres/config/database.yml
+--- base/config/database.yml	2020-02-14 11:15:34.000000000 -0300
++++ postgres/config/database.yml	2020-02-14 11:00:28.000000000 -0300
+@@ -1,4 +1,5 @@
+ default: &default
++  adapter: postgresql
+   pool: <%= ENV['RAILS_THREADS'].split(':').last %>
+   host: <%= ENV['DB_HOST'] %>
+   port: <%= ENV['DB_PORT'] %>
