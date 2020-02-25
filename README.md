@@ -1,28 +1,44 @@
 # Cloud
 
-Orchestrates Rails+Kubernetes Clouds in macOS.
+Provides a simple orchestration of a Ruby on Rails deployment within a localised Kubernetes environment on macOS utilising a xhyve hypervisor.
 
 ## Why?
 
-I want a standarized way to manage infrastructure that will only require to know one api.
+I wanted to create a standarized way to manage infrastructure, to enable development teams to work on a consistent platform, whilst lowering the entry bar to running Kubernetes locally.
+
+## What
+TODO
 
 ## How to install?
 
-Run this command:
+Begin by running this command:
 ```
 sh <(curl -s https://raw.githubusercontent.com/chi-rb/chi-cloud/master/bin/cloud) install
 ```
+This will commence the cloud install script and prompt for some initial configuration.
 
-## How to uninstall? 
+Configuration of the base hypervisor VM can be adjusted, depending on host machine specifications.
+```
+~> Choosing Configuration
+Virtual machine memory: 4G
+Virtual machine cpus: 4
+```
 
-Run this commnad:
+The host administration password will be requested to complete the installation.
+
+You will also be asked for your hub.docker.com account credentials for storing the cloud docker images.
+
+## How to uninstall?
+
+To completely uninstall cloud and the associated VM:
 ```
 cloud uninstall
 ```
+THIS IS DESTRUCTIVE - YOU HAVE BEEN WARNED
 
 ## How to update?
 
-To update to the latest commit on master:
+To update to the latest commit on the master branch:
 ```
 cloud update
 ```
@@ -32,19 +48,24 @@ Or to a specific tag:
 cloud update v1.4.0
 ```
 
+## Getting Started
+
 ### How to initialize a cloud?
 
-To initialize a cloud:
+Cloud can be used to generate a new Rails app by running:
+
+```
+cloud init path_to/awesome/new_app
+```
+This will generate a Rails app from the current stable Rails branch.
+
+A Cloud deployment can be added to an existing Rails app by navigating to the root directory and running:
 ```
 cloud init
 ```
+This will leave the existing application intact with the addition of a `cloud` directory, that will contain the required configuration.
 
-Or the same specifying a path:
-```
-cloud init awesome/app
-```
-
-NOTE: Will generate a rails app if path is empty, otherwise just the `cloud` folder.
+NB: If using macOS Catalina see `Known Issues` below.
 
 ## How to manage a cloud?
 
@@ -73,7 +94,7 @@ cloud deploy
 
 ### Undeploy
 
-Undeploys app from the cloud:
+Occasionally it is useful to delete all deployed pods to recover from an error, this can be achieved with:
 ```
 cloud undeploy
 ```
@@ -104,7 +125,7 @@ cloud restart chrome
 
 ### Shell
 
-Opens bash shell in rails pod:
+Opens bash shell in the Rails pod:
 ```
 cloud shell
 ```
@@ -116,9 +137,9 @@ cloud shell hub
 
 ### Attach
 
-Attachs into first process of rails pod:
+Attaches into the first process of Rails pod:
 ```
-cloud attach 
+cloud attach
 ```
 
 Or any other:
@@ -137,7 +158,7 @@ NOTE: To connect you need to ssh into hacker@cloud.
 
 ### Exec
 
-Executes command in rails pod:
+Executes command in Rails pod:
 ```
 cloud exec -- bundle update
 ```
@@ -156,14 +177,21 @@ cloud open
 
 ### Log
 
-Tails log of rails pod:
+Tails log of Rails pod:
 ```
 cloud log
 ```
 
-Or any ohter:
+Or any other:
 ```
 cloud log redis
+```
+
+## How to run Rails commands
+
+Add the following to your shell profile. This will map any rails commands to the cloud instance inside the root directory, whilst leaving any additional Ruby management tools (rbenv, RVM etc) intact for other projects.
+```
+export PATH=/usr/local/cloud/bin:$PATH
 ```
 
 ## How to manage the vm?
@@ -223,7 +251,7 @@ cloud help
 
 ### macOS Catalina
 
-New security measures has been added into Catalina, so you need to manually add `/sbin/nfsd` and `/usr/local/cloud/mac/xhyve` into `System Preferences > Security & Privacy > Privacy > Full Disk Access`.
+New security measures have been added into Catalina, so you need to manually add `/sbin/nfsd` and `/usr/local/cloud/mac/xhyve` into `System Preferences > Security & Privacy > Privacy > Full Disk Access`.
 
 ## Credits
 
