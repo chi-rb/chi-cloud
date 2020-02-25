@@ -20,8 +20,6 @@ Run this commnad:
 cloud uninstall
 ```
 
-NOTE: There is a shortcut if you want to resintall `cloud resinstall`
-
 ## How to update?
 
 To update to the latest commit on master:
@@ -149,20 +147,6 @@ Or any other:
 cloud exec mysql -- mysqldump
 ```
 
-### Console
-
-Attachs to rails console:
-```
-cloud console
-```
-
-### Rails
-
-Executes rails command:
-```
-cloud rails db:migrate
-```
-
 ### Open
 
 Opens browser pointing to app:
@@ -243,7 +227,9 @@ New security measures has been added into Catalina, so you need to manually add 
 
 ## Credits
 
-It's sponsored by:
+This gem is funded and maintained by [mmontossi](https://github.com/mmontossi).
+
+With the sponsorship of:
 
 [![Occam Logo](https://www.occam.global/wp-content/uploads/2018/01/Occam_V1_170px.png)](https://www.occam.global)
 
