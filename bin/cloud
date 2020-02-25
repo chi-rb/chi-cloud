@@ -567,7 +567,6 @@ cloud_bin() {
 		shift
 		bin_path=bin/$name
 		if [ -f $bin_path ]; then
-			shift
 			cmd=$bin_path
 		else
 			cmd=$name
