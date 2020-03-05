@@ -604,23 +604,27 @@ cloud_install() {
 }
 
 cloud_delete_settings() {
-	rm -rf $user_cloud_path
+	begin Deleting Settings
+	if [ -d $user_cloud_path ]; then
+		rm -rf $user_cloud_path
+	else
+		echo Not found
+	fi
 }
 
 cloud_delete_repo() {
-	sudo rm -rf $repo_path
+	begin Deleting Cloud
+	if [ -d $repo_path ]; then
+		sudo rm -rf $repo_path
+	else
+		echo Not found
+	fi
 }
 
 cloud_uninstall() {
 	vm_uninstall nested
-	if [ -d $user_cloud_path ]; then
-		begin Deleting Settings
-		cloud_delete_settings
-	fi
-	if [ -d $repo_path ]; then
-		begin Deleting Cloud
-		cloud_delete_repo
-	fi
+	cloud_delete_settings
+	cloud_delete_repo
 	complete
 }
 
@@ -701,9 +705,8 @@ cloud_generate() {
 }
 
 cloud_init() {
-	db=$(cloud_generate_db "$@")
 	cloud_set_paths "$@"
-	cloud_generate $db
+	cloud_generate
 	cloud_choose_settings
 	cloud_set_remote
 	complete
