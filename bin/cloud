@@ -1,8 +1,12 @@
 #!/bin/sh
 
+# SETTINGS
+
+context=${CLOUD:-local}
 hosts_path=/etc/hosts
 bin_path=/usr/local/bin
-cloud_path=$bin_path/cloud
+nfsd_path=/sbin/nfsd
+tcc_path=/Library/Application\ Support/com.apple.TCC/TCC.db
 rails_pod=rails
 
 agent_name=com.cloud
@@ -31,10 +35,10 @@ repo_vmlinuz_path=$repo_vm_path/vmlinuz
 repo_disk_path=$repo_vm_path/disk.img.xz
 repo_bin_path=$repo_path/bin
 repo_xhyve_path=$repo_bin_path/xhyve
+repo_ruby_path=$repo_bin_path/ruby
 
 user_cloud_path=$HOME/.cloud
 user_conf_path=$user_cloud_path/conf
-user_auth_path=$user_cloud_path/auth.json
 user_disk_path=$user_cloud_path/disk.img
 user_agent_path=$HOME/Library/LaunchAgents/$agent_filename
 
@@ -59,6 +63,23 @@ user_setting_descs=(
 	'Virtual machine cpus'
 )
 
+# UTILS
+
+read_json() {
+	cat - |
+	grep -oE "$1\": \"[^\"]+" |
+	head -n1 |
+	awk '{ print $2 }' |
+	tr -d '"'
+}
+
+wait_for() {
+	while [ "$($1)" != $2 ]; do
+		echo .
+		sleep 30
+	done
+}
+
 ok() {
 	if [ "$beginned" = true ]; then
 		echo Ok
@@ -71,6 +92,13 @@ complete() {
 		echo
 	fi
 	echo Complete
+}
+
+authorize() {
+	echo "Enter username: \c"
+	read user
+	echo "Enter password: \c"
+	read -s pass
 }
 
 error() {
@@ -95,11 +123,393 @@ correct() {
 	fi
 }
 
+unknown() {
+	if [ ! -z $1 ]; then
+		echo "Unknown command \`$1\` \n"
+	fi
+}
+
 gen_id() {
 	echo $(uuidgen | tr '[:upper:]' '[:lower:]')
 }
 
-set_app_paths() {
+edit() {
+	if [ -z $EDITOR ]; then
+		echo Edit $1 to setup environment
+	else
+		$EDITOR $1
+	fi
+}
+
+add_conf() {
+	if [ $2 = - ]; then
+		conf=$(cat -)
+	else
+		if [ -z $3 ]; then
+			conf="$2=${!2}"
+		else
+			conf="$2=$3"
+		fi
+	fi
+	echo "$conf" >> $1
+}
+
+del_conf() {
+	sed -i '' "/$2/d" $1 
+}
+
+bin_authorized() {
+	sudo sqlite3 "$tcc_path" "select 1 from access where service=\"kTCCServiceSystemPolicyAllFiles\" and client=\"$1\""
+}
+
+show_file() {
+	osascript -e 'tell application "Finder"' -e activate -e "reveal POSIX file \"$1\"" -e end tell
+}
+
+open_privacy() {
+	open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 
+}
+
+authorize_bin() {
+	while [ -z $(bin_authorized $1) ]; do
+		open_privacy
+		echo Please drag the binary into the full disk access tab
+		show_file $1
+		echo Press enter once done
+		read
+	done
+}
+
+host_exists() {
+	sudo grep $vm_name $hosts_path >/dev/null 2>&1
+}
+
+export_exists() {
+	test -f $exports_path && sudo grep $exports_home_path $exports_path >/dev/null 2>&1
+}
+
+# COMPILE
+
+compile_tpl() {
+	output=$(cat "$1")
+	subs=$(grep -o '{{ [a-z_. ]* }}' "$1" | uniq)
+	while read sub; do
+		sub_args=( $(echo $sub | sed 's/{{ //' | sed 's/ }}//') )
+		case $sub in
+		{{\ render\ *)
+			render_path=${sub_args[1]}
+			vars=("${sub_args[@]:2}")
+			for var in $vars; do
+				declare $var
+			done
+			snippet_path=$cloud_snippets_path/$render_path.yml
+			sub_value=$(compile_tpl "$snippet_path" $2 $3 | sed 's/\//\\\//g' | tr '\n' '\r')
+			output=$(echo "$output" | sed "s/$sub/$sub_value/g" | tr '\r' '\n' | sed '/^$/d')
+		;;
+		*)
+			sub_name=${sub_args[0]}
+			cloud_sub_name=cloud_${sub_name}
+			pod_sub_name=${2}_${sub_name}
+			if [ ! -z "${!pod_sub_name}" ]; then
+				target_sub_name=$pod_sub_name
+			elif [ ! -z "${!cloud_sub_name}" ]; then
+				target_sub_name=$cloud_sub_name
+			elif [ ! -z "${!sub_name}" ]; then
+				target_sub_name=$sub_name
+			else
+				error $sub undefined, compiling $1 in $cloud_env
+			fi
+			sub_value=$(echo ${!target_sub_name} | sed 's/\//\\\//g')
+			output=$(echo "$output" | sed "s/$sub/$sub_value/g")
+		;;
+		esac
+	done <<-EOF
+		$(echo "$subs")
+	EOF
+	echo "$output"
+}
+
+compile_tpls() {
+	paths=()
+	names=()
+	pod_names=()
+	while read path; do
+		paths+=("$path")
+	done <<< "$(find "$cloud_compile_path" -type f -name '*.yml')"
+	for i in ${!paths[@]}; do
+		path=${paths[$i]}
+		name=$(basename "$path" | sed 's/\.yml$//' | tr - _)
+		names+=($name)
+		pod_name=$(echo $name | tr _ -)
+		pod_names+=($pod_name)
+		declare "${name}_host=$pod_name"
+		declare "${name}_name=$pod_name"
+	done
+	for i in ${!paths[@]}; do
+		path=${paths[$i]}
+		name=${names[$i]}
+		pod_name=${pod_names[$i]}
+		apply_path=$cloud_apply_path/${path#$cloud_compile_path/}
+		mkdir -p "$(dirname "$apply_path")"
+		echo "$(compile_tpl "$path" $name $pod_name)" >> "$apply_path"
+	done
+}
+
+compile_statics() {
+	if [ $context = remote ]; then
+		case $cloud_provider in
+		aws)
+			cat <<-YML > "$cloud_docker_path"
+				apiVersion: v1
+				kind: ConfigMap
+				metadata:
+				  name: docker
+				data:
+				  config.json: |
+				    { "credsStore": "ecr-login" }
+			YML
+			case $cloud_provider in
+			aws)
+				credentials=$(vm_ssh cat /home/hacker/.aws/credentials | base64)
+				cat <<-YML > "$cloud_aws_path"
+					apiVersion: v1
+					kind: Secret
+					type: Opaque
+					metadata:
+					  name: aws
+					data:
+					  credentials: $credentials
+				YML
+			;;
+			esac
+		;;
+		esac
+	fi
+	cat <<-YML > "$cloud_namespace_path"
+		apiVersion: v1
+		kind: Namespace
+		metadata:
+		  name: $cloud_id
+		  labels:
+		    name: $cloud_id
+	YML
+	escaped_cloud_apply_path=$(echo "$cloud_apply_path/" | sed 's/\//\\\//g')
+	resources=$(find "$cloud_apply_path" -name '*.yml' | sed "s/$escaped_cloud_apply_path//g" | sed 's/^/  - /g')
+	cat <<-YML > "$cloud_kustomization_path"
+		namespace: $cloud_id
+		resources:
+		$resources
+	YML
+}
+
+compile() {
+	begin Compiling YAMLs
+	find "$cloud_tmp_path" ! -name 'images' -maxdepth 1 -mindepth 1 -exec rm -rf {} +
+	mkdir -p "$cloud_compile_path"
+	case $1 in
+	build)
+		while read dir_path; do
+			name=$(basename "$dir_path")
+			target_path="$cloud_compile_path/$name.yml"
+			mkdir -p "$cloud_images_path"
+			case $context in
+			local)
+				cat <<-YML > "$target_path"
+					apiVersion: v1
+					kind: Pod
+					metadata:
+					  name: {{ name }}-build
+					  labels:
+					    name: {{ name }}-build
+					spec:
+					  restartPolicy: Never
+					  containers:
+					  - image: gcr.io/kaniko-project/executor:latest
+					    name: kaniko
+					    args:
+					    - --no-push
+					    - --tarPath=/rails/tmp/cloud/images/{{ name }}.tar
+					    - --destination=image
+					    - --context=/rails/cloud/build/rails
+					    - --dockerfile=/Dockerfile
+					    - --build-arg=RAILS_ENV={{ cloud_env }}
+					    volumeMounts:
+					    - name: rails
+					      mountPath: /rails
+					  volumes:
+					  - name: rails
+					    hostPath:
+					      path: {{ app_path }}
+				YML
+			;;
+			remote)
+				case $cloud_provider in
+				aws)
+					cat <<-YML > "$target_path"
+						apiVersion: v1
+						kind: Pod
+						metadata:
+						  name: {{ name }}-build
+						  labels:
+						    name: {{ name }}-build
+						spec:
+						  restartPolicy: Never
+						  containers:
+						  - image: gcr.io/kaniko-project/executor:latest
+						    name: kaniko
+						    args:
+						    - --destination={{ repo }}
+						    - --context=/rails/cloud/build/{{ name }}
+						    - --dockerfile=/Dockerfile
+						    - --build-arg=RAILS_ENV={{ cloud_env }}
+						    volumeMounts:
+						    - name: rails
+						      mountPath: /rails
+						    - name: docker
+						      mountPath: /kaniko/.docker/
+						    - name: aws
+						      mountPath: /root/.aws/
+						  volumes:
+						  - name: rails
+						    hostPath:
+						      path: {{ app_path }}
+						  - name: docker
+						    configMap:
+						      name: docker
+						  - name: aws
+						    secret:
+						      secretName: aws
+					YML
+				;;
+				esac
+			;;
+			esac
+		done <<< "$(find "$cloud_build_path" -type d -maxdepth 1 -mindepth 1)"
+	;;
+	deploy)
+		while read yml_path; do
+			name=$(basename "$yml_path")
+			target_path="$cloud_compile_path/$name"
+			cp "$yml_path" "$target_path"
+		done <<< "$(find "$cloud_deploy_path/base" "$cloud_deploy_path/$cloud_env" -name \*.yml)"
+	;;
+	esac
+	compile_tpls
+	compile_statics
+}
+
+# CLOUD 
+
+cloud_kubectl() {
+	cmd=$@
+	if [ ! -z $cloud_id ]; then
+		cmd="--namespace $cloud_id $cmd"
+	fi
+	vm_kubectl $cmd
+}
+
+cloud_find_pod() {
+	name=${1:-$rails_pod}
+	echo $(cloud_kubectl get pod -l "name=$name" -o jsonpath='{.items[0].metadata.name}')
+}
+
+cloud_pod_exec() {
+	name=$1
+	shift
+	cloud_kubectl exec -it $name -- $@
+}
+
+cloud_dir_exists() {
+	test -d "$cloud_path"
+}
+
+cloud_load() {
+	cloud_set_paths
+	cloud_env=${RAILS_ENV:-development}
+	if [ $context = remote ]; then
+		. "$cloud_remote_path"
+	else
+		. "$cloud_local_path"
+	fi
+	cloud_ensure_env $cloud_env
+	. "$cloud_base_path"
+	. "$cloud_env_path"
+	cloud_id=$cloud_name-$cloud_env
+}
+
+cloud_ensure_dir() {
+	if ! cloud_dir_exists; then
+		error No cloud directory found
+	fi
+}
+
+cloud_env_exists() {
+	if [ ! -z $1 ]; then
+		cloud_env_path=$cloud_envs_path/$1
+		if [ ! -f "$cloud_env_path" ]; then
+			return 1
+		fi
+	else
+		error No environment specified
+	fi
+}
+
+cloud_ensure_env() {
+	cloud_ensure_dir
+	if ! cloud_env_exists $1; then
+		error Environment $1 not exists
+	fi
+}
+
+cloud_choose_name() {
+	if [ -z $cloud_name ]; then
+		echo "Enter name: \c"
+		read	cloud_name
+		add_conf $cloud_base_path cloud_name
+	fi
+}
+
+cloud_choose_port() {
+	if [ -z $rails_cluster_port ]; then
+		echo "Enter port: \c"
+		read	rails_cluster_port
+		add_conf $cloud_dev_path rails_cluster_port
+	fi
+}
+
+cloud_choose_provider() {
+	if [ -z $cloud_provider ]; then
+		echo 'Choose provider: Amazon (A)?'
+		read cloud_provider
+		case $cloud_provider in
+		A|a|'')
+			cloud_provider=aws
+		;;
+		esac
+		add_conf $cloud_base_path cloud_provider
+	fi
+}
+
+cloud_set_remote() {
+	case $cloud_provider in
+	aws)
+		aws_create_cloud
+	;;
+	esac
+}
+
+cloud_choose_settings() {
+	begin Choosing Settings
+	if [ -z $cloud_name ] || [ -z $rails_cluster_port ] || [ -z $cloud_provider ]; then
+		cloud_choose_name
+		cloud_choose_port
+		cloud_choose_provider
+	else
+		echo Already setted
+	fi
+}
+
+cloud_set_paths() {
 	if [ ! -z "$1" ]; then
 		if [ ${1:0:1} = / ]; then
 			app_path=$1
@@ -109,21 +519,27 @@ set_app_paths() {
 	else
 		app_path=$PWD
 	fi
-	app_cloud_path=$app_path/cloud
-	app_tmp_path=$app_path/tmp/cloud
-	app_apply_path=$app_tmp_path/apply
-	app_secret_path=$app_apply_path/secret.yml
-	app_namespace_path=$app_apply_path/namespace.yml
-	app_kustomization_path=$app_apply_path/kustomization.yml
-	app_envs_path=$app_cloud_path/envs
-	app_base_path=$app_envs_path/base
-	app_dev_path=$app_envs_path/development
-	app_prod_path=$app_envs_path/production
-	app_build_path=$app_cloud_path/build
-	app_deploy_path=$app_cloud_path/deploy
-	app_snippets_path=$app_deploy_path/snippets
-	app_samples_path=$app_tmp_path/samples
-	app_sample_paths=(
+	cloud_path=$app_path/cloud
+	cloud_tmp_path=$app_path/tmp/cloud
+	cloud_images_path=$cloud_tmp_path/images
+	cloud_compile_path=$cloud_tmp_path/compile
+	cloud_apply_path=$cloud_tmp_path/apply
+	cloud_docker_path=$cloud_apply_path/docker.yml
+	cloud_aws_path=$cloud_apply_path/aws.yml
+	cloud_namespace_path=$cloud_apply_path/namespace.yml
+	cloud_kustomization_path=$cloud_apply_path/kustomization.yml
+	cloud_contexts_path=$cloud_path/contexts
+	cloud_local_path=$cloud_contexts_path/local
+	cloud_remote_path=$cloud_contexts_path/remote
+	cloud_envs_path=$cloud_path/envs
+	cloud_base_path=$cloud_envs_path/base
+	cloud_dev_path=$cloud_envs_path/development
+	cloud_prod_path=$cloud_envs_path/production
+	cloud_build_path=$cloud_path/build
+	cloud_deploy_path=$cloud_path/deploy
+	cloud_snippets_path=$cloud_deploy_path/snippets
+	cloud_samples_path=$cloud_tmp_path/samples
+	cloud_sample_paths=(
 		config/puma.rb
 		config/database.yml
 		config/cable.yml
@@ -132,7 +548,633 @@ set_app_paths() {
 	)
 }
 
-configure() {
+cloud_clone() {
+	begin Cloning Repository
+	if [ ! -d $repo_path ]; then
+		mkdir -p $tmp_path
+		git clone git@github.com:chi-rb/chi-cloud.git $tmp_repo_path
+		sudo mv $tmp_repo_path $repo_path
+	else
+		echo Already cloned
+	fi
+}
+
+cloud_authorize_nfsd() {
+	begin Authorizing NFSD
+	if ! bin_authorized $nfsd_path; then
+		authorize_bin $nfsd_path
+		sudo nfsd restart
+	else
+		echo Already authorized
+	fi
+}
+
+cloud_authorize_xhyve() {
+	begin Authorizing XHYVE
+	if ! bin_authorized $repo_xhyve_path; then
+		authorize_bin $repo_xhyve_path
+	else
+		echo Already authorized
+	fi
+}
+
+cloud_update_rc() {
+	begin Prepending PATH
+	ruby=$(which ruby)
+	if [ $ruby != $ruby_path ]; then
+		cat <<-DOC
+			Add this into your shell rc file:
+			PATH=/usr/local/cloud/bin:$PATH
+
+			And then:
+			. /shell-rc-path
+		DOC
+	else
+		echo Already updated	
+	fi
+}
+
+cloud_install() {
+	cloud_clone
+	cloud_authorized_nfsd
+	cloud_authorized_xhyve
+	vm_install nested
+	cloud_update_rc
+	complete
+}
+
+cloud_delete_settings() {
+	rm -rf $user_cloud_path
+}
+
+cloud_delete_repo() {
+	sudo rm -rf $repo_path
+}
+
+cloud_uninstall() {
+	vm_uninstall nested
+	if [ -d $user_cloud_path ]; then
+		begin Deleting Settings
+		cloud_delete_settings
+	fi
+	if [ -d $repo_path ]; then
+		begin Deleting Cloud
+		cloud_delete_repo
+	fi
+	complete
+}
+
+cloud_update() {
+	begin Updating Repository
+	current_path=$PWD
+	cd $repo_path
+	git pull
+	current_branch=$(git branch | cut -d ' ' -f2)
+	new_branch=${2:-master}
+	if [ $current_branch != $new_branch ]; then
+		git checkout $new_branch
+	fi
+	cd "$current_path"
+	complete
+}
+
+cloud_resolve_db() {
+	cloud_db=postgres
+	while getopts 'd:' o; do
+		case "$o" in
+		d)
+			if [ $OPTARG != postgres ] && [ $OPTARG != mysql ]; then
+				error Unknown database $OPTARG
+			else
+				cloud_db=$OPTARG
+			fi
+		;;
+		esac
+	done
+	add_conf "$cloud_base_path" cloud_db
+}
+
+cloud_generate_tmp() {
+	mkdir -p $tmp_path
+	rm -rf $tmp_base_path
+	cp -r $repo_base_path $tmp_base_path
+	patch_name=$cloud_db.patch
+	patch_path=$tmp_path/$patch_name
+	cp $repo_app_path/$patch_name $tmp_path
+	patch -s -p0 -d $tmp_path < $patch_path
+	rm $patch_path
+}
+
+cloud_generate_app() {
+	mkdir -p "$(dirname "$app_path")"
+	mv $tmp_base_path "$app_path"
+	git init "$app_path"
+}
+
+cloud_generate_dir() {
+	mv $tmp_cloud_path "$cloud_path"
+	mkdir -p "$cloud_samples_path"
+	for sample_path in "${cloud_sample_paths[@]}"; do
+		destination_path=$cloud_samples_path/$sample_path
+		mkdir -p "$(dirname "$destination_path")"
+		cp $tmp_base_path/$sample_path "$destination_path"
+	done
+	rm -rf $tmp_base_path
+	echo You might need to tweak a few files, try using tmp/cloud/samples as a guideline
+}
+
+cloud_generate() {
+	begin Generating Directory
+	if ! cloud_dir_exists; then
+		cloud_resolve_db
+		shift $((OPTIND-1))
+		cloud_set_paths "$@"
+		cloud_generate_tmp
+		if [ ! -d "$app_path" ]; then
+			cloud_generate_app
+		else
+			cloud_generate_dir
+		fi
+	else
+		echo Already generated
+	fi
+}
+
+cloud_init() {
+	db=$(cloud_generate_db "$@")
+	cloud_set_paths "$@"
+	cloud_generate $db
+	cloud_choose_settings
+	cloud_set_remote
+	complete
+}
+
+cloud_open() {
+	cloud_load
+	open "http://$vm_name:$rails_cluster_port"
+}
+
+cloud_bin() {
+	cloud_set_paths
+	path=$1
+	name=$(basename $path)
+	if cloud_dir_exists; then
+		shift
+		bin_path=bin/$name
+		if [ -f $bin_path ]; then
+			cmd=$bin_path
+		else
+			cmd=$name
+		fi
+		cloud_exec -- $cmd $@
+	else
+		alt=$(which -a $name | grep -A 1 $path | tail -n 1)
+		if [ -z "$alt" ]; then
+			error "No alternative found for \`$name\`"
+		else
+			$alt $@
+		fi
+	fi
+}
+
+cloud_delete_namespace() {
+	begin Deleting Namespace
+	vm_kubectl delete namespace $cloud_id
+}
+
+cloud_delete_dir() {
+	begin Deleting Cloud Directory
+	if [ ! -d "$cloud_path" ]; then
+		rm -rf "$cloud_path"
+	else
+		echo Not found
+	fi
+}
+
+cloud_destroy() {
+	cloud_load
+	cloud_delete_namespace
+	cloud_delete_dir
+	complete
+}
+
+cloud_apply() {
+	begin Applying YAMLs
+	vm_kubectl apply -k \"$cloud_apply_path\"
+}
+
+cloud_clear_builds() {
+	begin Clearing Builds
+	build_names=$(cloud_kubectl get pods --no-headers=true | awk '/-build/{ORS=" "; print $1}')
+	if [ ! -z "$build_names" ]; then
+		cloud_kubectl delete pods $build_names
+	fi
+}
+
+cloud_build() {
+	cloud_load
+	cloud_clear_builds
+	compile build
+	cloud_apply
+	complete
+	echo "\nUse \`cloud log <pod-name>\` to see logs"
+}
+
+cloud_import_images() {
+	begin Importing Images
+	image_paths=$(find "$cloud_images_path" -name \*.tar)
+	if [ ! -z $image_paths ]; then
+		while read image_path; do
+			name=$(basename $image_path | sed 's/\.tar//')
+			default_tag=docker.io/library/image
+			tag=docker.io/library/$name-$cloud_env
+			sha=$(vm_ssh sudo k3s crictl images | grep $tag | awk '{ print $3 }')
+			if [ ! -z $sha ]; then
+				vm_ssh sudo k3s crictl rmi $sha
+			fi
+			vm_ssh sudo sh <<-SSH
+				k3s ctr images import $image_path
+				k3s ctr images tag $default_tag:latest $tag:latest
+				k3s ctr images remove $default_tag:latest
+			SSH
+			rm $image_path
+		done <<< $image_paths
+	else
+		echo Already imported
+	fi
+}
+
+cloud_deploy() {
+	cloud_load
+	cloud_import_images
+	compile deploy
+	cloud_apply
+	complete
+}
+
+cloud_undeploy() {
+	cloud_load
+	begin Undeploying
+	cloud_kubectl delete --all deployments
+	complete
+}
+
+cloud_restart() {
+	cloud_load
+	name=$(cloud_find_pod $1)
+	cloud_kubectl delete pod $name
+}
+
+cloud_shell() {
+	cloud_load
+	name=$(cloud_find_pod $1)
+	cloud_pod_exec $name /bin/bash
+}
+
+cloud_attach() {
+	cloud_load
+	name=$(cloud_find_pod $1)
+	cloud_kubectl attach -it $name
+}
+
+cloud_tunnel() {
+	cloud_load
+	port=$(cloud_kubectl get service $1 --no-headers=true | awk '{ print $5 }' | sed 's/\/.*//')
+	name=$(cloud_find_pod $1)
+	cloud_kubectl port-forward $name $port:$port
+}
+
+cloud_exec() {
+	cloud_load
+	if [ $# -gt 2 ] && [ "$2" = -- ]; then
+		name=$1
+		shift 2
+	elif [ $# -gt 1 ] && [ "$1" = -- ]; then
+		shift
+	else
+		error Wrong format
+	fi
+	name=$(cloud_find_pod $name)
+	cloud_pod_exec $name $@
+}
+
+cloud_status() {
+	cloud_load
+	if [ -z "$1" ]; then
+		cloud_kubectl get pods
+	else
+		name=$(cloud_find_pod $1)
+		cloud_kubectl describe pod $name
+	fi
+}
+
+cloud_log() {
+	cloud_load
+	name=$(cloud_find_pod $1)
+	cloud_kubectl logs -f $name
+}
+
+cloud_help() {
+	unknown $1
+	cat <<-DOC
+		Usage: cloud <command> [options]
+		Orchestrates Rails+Kubernetes Clouds.
+
+		Available commands:
+			install       Installs cloud
+			uninstall     Uninstalls cloud
+			update [tag]  Syncs latest or specific version
+			init [path]   Generates directory and initializes
+			destroy       Deletes directory and purges
+			build         Builds docker images
+			deploy        Deploys application
+			undeploy      Undeploys application
+			status [pod]  Prints status of pods (all by default)
+			restart [pod] Restart pod (rails by default)
+			shell [pod]   Opens bash shell in pod (rails by default)
+			attach pod    Attachs into first process of pod (rails by default)
+			tunnel pod    Creates temporary tunnel into pod
+			exec [pod]    Executes shell command in pod (rails by default)
+			open          Opens browser pointing to app
+			log [pod]     Tails pod log (rails by default)
+			envs          Manages environments
+			vm            Manages virtual machine
+			help          Prints documentation
+	DOC
+}
+
+# ENVS
+
+envs_list() {
+	cloud_set_paths
+	list=$(ls -1 "$cloud_envs_path")
+	if [ -z "$list" ]; then
+		error No environments found
+	else
+		echo "$list"
+	fi
+}
+
+envs_add() {
+	cloud_set_paths
+	if ! cloud_env_exists $1; then
+		begin Adding Environment $1
+		mkdir -p "$cloud_envs_path"
+		touch "$cloud_env_path"
+		envs_edit_current
+	else
+		error Environment $1 already added
+	fi
+	complete
+}
+
+envs_edit_current() {
+	edit "$cloud_env_path"
+}
+
+envs_edit() {
+	cloud_set_paths
+	cloud_ensure_env $1
+	begin Editing Environment $1
+	envs_edit_current
+	complete
+}
+
+envs_delete() {
+	cloud_set_paths
+	cloud_ensure_env $1
+	begin Deleting Environment $1
+	rm -f "$cloud_env_path"
+	complete
+}
+
+envs_help() {
+	unknown $1
+	cat <<-DOC
+		Usage: cloud envs <command> [options]
+
+		Available commands:
+			list          Lists all
+			add           Adds new
+			edit          Edits existing
+			delete        Delete existing 
+			help          Prints documentation
+	DOC
+}
+
+# VM
+
+vm_net_exists() {
+	if [ -f $user_conf_path ]; then
+		for name in ${net_setting_names[@]}; do
+			if cat $user_conf_path | grep $name >/dev/null 2>&1; then
+				return 0
+			fi
+		done
+		return 1
+	else
+		return 1
+	fi
+}
+
+vm_running() {
+	sudo launchctl list | grep $agent_name >/dev/null 2>&1
+}
+
+vm_ssh() {
+	ssh -tq \
+	-o 'ConnectTimeout=10' \
+	-o 'ControlMaster=auto' \
+	-o 'ControlPersist=600' \
+	-o 'ControlPath=/tmp/%r@%h' \
+	-o 'UserKnownHostsFile=/dev/null' \
+	-o 'StrictHostKeyChecking=no' \
+	$vm_user@$vm_name $@
+}
+
+vm_wait_ssh() {
+	begin Waiting SSH
+	while :; do
+		vm_ssh exit
+		printf .
+		if [ $? -eq 0 ]; then
+			echo
+			break
+		else
+			sleep 30
+		fi
+	done
+}
+
+vm_kubectl() {
+	cmd=$@
+	if [ $context = remote ]; then
+		case $cloud_provider in
+		aws)
+			cmd="--kubeconfig $aws_kubeconfig_path $cmd"
+		;;
+		esac
+	fi
+	vm_ssh sudo kubectl $cmd
+}
+
+vm_download() {
+	begin Dowloading Images
+	if [ ! -d $repo_vm_path ]; then
+		mkdir $repo_vm_path
+		curl -o $repo_initrd_path $s3_initrd_url
+		curl -o $repo_vmlinuz_path $s3_vmlinuz_url
+		curl -o $repo_disk_path $s3_disk_url
+	else
+		echo Already downloaded
+	fi
+}
+
+vm_create_disk() {
+	begin Creating Disk
+	if [ ! -f $user_disk_path ]; then
+		tar xJvf $repo_disk_path -C $user_cloud_path
+	else
+		echo Already created
+	fi
+}
+
+vm_first_boot() {
+	begin First Boot
+	if ! vm_settings_exists; then
+		while :; do
+			echo Waiting to receive ip
+			cloud vm start
+			mkdir -p $tmp_path
+			nc -l 1234 > $tmp_conf_path & sleep 30; kill $! >/dev/null 2>&1
+			if [ -z "$(cat $tmp_conf_path)" ]; then
+				vm_stop
+			else
+				break
+			fi
+		done
+		. $tmp_conf_path
+		cat $tmp_conf_path >> $user_conf_path
+		rm $tmp_conf_path
+	else
+		echo Already booted
+	fi
+}
+
+vm_add_host() {
+	begin Adding Hostname
+	if ! host_exists; then
+		echo $vm_ip $vm_name | sudo tee -a $hosts_path
+	else
+		echo Already added
+	fi
+}
+
+vm_share_home() {
+	begin Sharing Home Directory
+	if ! export_exists; then
+		echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
+		sudo nfsd update
+		vm_wait_ssh
+		vm_ssh sudo sh <<-SSH
+			echo "$mac_ip:$exports_home_path\t$HOME\tnfs local_lock=all\t0 0" >> /etc/fstab
+			mkdir -p $HOME
+			mount $HOME
+		SSH
+	else
+		echo Already shared
+	fi
+}
+
+vm_init() {
+	begin Initializing Virtual Machine
+	if [ -z $vm_id ]; then
+		vm_id=$(gen_id)
+		add_conf $user_conf_path vm_id
+		vm_config nested
+	else
+		echo Already initialized
+	fi
+}
+
+vm_install() {
+	vm_download
+	vm_init
+	vm_create_disk
+	vm_first_boot
+	vm_add_host
+	vm_share_home
+	if [ "$1" != nested ]; then
+		complete
+	fi
+}
+
+vm_delete_agent() {
+	begin Deleting Agent
+	if [ -f $user_agent_path ]; then
+		sudo rm $user_agent_path
+	else
+		echo Not found
+	fi
+}
+
+vm_delete_net() {
+	begin Deleting Network Settings
+	if vm_settings_exists; then
+		for name in ${net_setting_names[@]}; do
+			sudo sed -i '' "/$name/d" $user_conf_path
+		done
+	else
+		echo Not found
+	fi
+}
+
+vm_delete_files() {
+	begin Deleting Virtual Machine
+	if [ -d $repo_vm_path ]; then
+		rm -rf $repo_vm_path
+		rm -rf $user_disk_path
+	else
+		echo Not found
+	fi
+}
+
+vm_delete_hostname() {
+	begin Deleting Hostname
+	if host_exists; then
+		sudo sed -i '' "/$vm_name/d" $hosts_path
+	else
+		echo Not found
+	fi
+}
+
+vm_unshare_home() {
+	begin Unsharing Home Directroy
+	if export_exists; then
+		escaped_exports_home_path=$(echo $exports_home_path | sed 's/\//\\\//g')
+		sudo sed -i '' "/$escaped_exports_home_path/d" $exports_path
+		sudo nfsd update
+	else
+		echo Not shared
+	fi
+}
+
+vm_uninstall() {
+	vm_stop
+	vm_delete_agent
+	if [ "$1" != nested ]; then
+		vm_delete_net
+		vm_delete_files
+	fi
+	vm_delete_hostname
+	vm_unshare_home
+	if [ "$1" != nested ]; then
+		complete
+	fi
+}
+
+vm_choose_settings() {
+	begin Choosing Settings
 	indexes=${!user_setting_names[@]}
 	for i in $indexes; do
 		desc=${user_setting_descs[$i]}
@@ -163,699 +1205,8 @@ configure() {
 	fi
 }
 
-authorize() {
-	echo "Enter username: \c"
-	read auth_user
-	echo "Enter password: \c"
-	read -s auth_pass
-}
-
-net_settings_exists() {
-	if [ -f $user_conf_path ]; then
-		for name in ${net_setting_names[@]}; do
-			if cat $user_conf_path | grep $name >/dev/null 2>&1; then
-				return 0
-			fi
-		done
-		return 1
-	else
-		return 1
-	fi
-}
-
-vm_running() {
-	sudo launchctl list | grep $agent_name >/dev/null 2>&1
-}
-
-host_exists() {
-	sudo grep $vm_name $hosts_path >/dev/null 2>&1
-}
-
-export_exists() {
-	test -f $exports_path && sudo grep $exports_home_path $exports_path >/dev/null 2>&1
-}
-
-vm_ssh() {
-	ssh -tq \
-	-o 'ConnectTimeout=10' \
-	-o 'ControlMaster=auto' \
-	-o 'ControlPersist=600' \
-	-o 'ControlPath=/tmp/%r@%h' \
-	-o 'UserKnownHostsFile=/dev/null' \
-	-o 'StrictHostKeyChecking=no' \
-	$vm_user@$vm_name $@
-}
-
-wait_ssh() {
-	while :; do
-		vm_ssh exit
-		if [ $? -eq 0 ]; then
-			break
-		else
-			echo Waiting ssh to be ready
-			sleep 30
-		fi
-	done
-}
-
-vm_kubectl() {
-	vm_ssh sudo kubectl $@
-}
-
-app_kubectl() {
-	cmd=$@
-	if [ ! -z $app_id ]; then
-		cmd="-n $app_id $cmd"
-	fi
-	vm_kubectl $cmd
-}
-
-find_pod() {
-	echo $(app_kubectl get pod -l "name=$1" -o jsonpath='{.items[0].metadata.name}')
-}
-
-pod_exec() {
-	name=$1
-	shift
-	app_kubectl exec -it $(find_pod $name) -- $@
-}
-
-app_cloud_exists() {
-	test -d "$app_cloud_path"
-}
-
-load_app() {
-	set_app_paths
-	app_env_name=${RAILS_ENV:-development}
-	app_env=$app_env_name
-	ensure_app_env $app_env_name
-	. "$app_base_path"
-	. "$app_env_path"
-	app_id=$app_name-$app_env_name
-}
-
-ensure_app() {
-	if ! app_cloud_exists; then
-		error No cloud folder found
-	fi
-}
-
-unknown() {
-	if [ ! -z $1 ]; then
-		echo "Unknown command \`$1\` \n"
-	fi
-}
-
-app_env_exists() {
-	if [ ! -z $1 ]; then
-		app_env_path=$app_envs_path/$1
-		if [ ! -f "$app_env_path" ]; then
-			return 1
-		fi
-	else
-		error No environment specified
-	fi
-}
-
-ensure_app_env() {
-	ensure_app
-	if ! app_env_exists $1; then
-		error Environment $1 not exists
-	fi
-}
-
-compile_tpl() {
-	tpl_output=$(cat "$1")
-	name=$3
-	tpl_subs=$(grep -o '{{ [a-z_. ]* }}' "$1" | uniq)
-	while read tpl_sub; do
-		tpl_sub_args=( $(echo $tpl_sub | sed 's/{{ //' | sed 's/ }}//') )
-		case $tpl_sub in
-		{{\ render\ *)
-			render_path=${tpl_sub_args[1]}
-			render_vars=("${tpl_sub_args[@]:2}")
-			for render_var in $render_vars; do
-				declare $render_var
-			done
-			render_snippet_path=$app_snippets_path/$render_path.yml
-			tpl_sub_value=$(compile_tpl "$render_snippet_path" $2 $3 | sed 's/\//\\\//g' | tr '\n' '\r')
-			tpl_output=$(echo "$tpl_output" | sed "s/$tpl_sub/$tpl_sub_value/g" | tr '\r' '\n' | sed '/^$/d')
-		;;
-		*)
-			tpl_sub_name=${tpl_sub_args[0]}
-			tpl_prefixed_sub_name=${2}_${tpl_sub_name}
-			if [ ! -z "${!tpl_prefixed_sub_name}" ]; then
-				tpl_normalized_sub_name=$tpl_prefixed_sub_name
-			elif [ ! -z "${!tpl_sub_name}" ]; then
-				tpl_normalized_sub_name=$tpl_sub_name
-			else
-				error $tpl_sub undefined, compiling $1 in $app_env_name
-			fi
-			tpl_sub_value=$(echo ${!tpl_normalized_sub_name} | sed 's/\//\\\//g')
-			tpl_output=$(echo "$tpl_output" | sed "s/$tpl_sub/$tpl_sub_value/g")
-		;;
-		esac
-	done <<-EOF
-		$(echo "$tpl_subs")
-	EOF
-	echo "$tpl_output"
-}
-
-compile_tpls() {
-	app_target_path=$app_cloud_path/$1
-	if [ "$1" = deploy ]; then
-		tpl_root_paths=("$app_target_path/base" "$app_target_path/$app_env_name")
-	else
-		tpl_root_paths=("$app_target_path")
-	fi
-	for ri in ${!tpl_root_paths[@]}; do
-		tpl_root_path="${tpl_root_paths[$ri]}"
-		tpl_paths=()
-		tpl_names=()
-		tpl_pod_names=()
-		tpl_matches=$(find "$tpl_root_path" -type f -name '*.yml')
-		while read tpl_path; do
-			tpl_paths+=("$tpl_path")
-		done <<-EOF
-			$(echo "$tpl_matches")
-		EOF
-		for ti in ${!tpl_paths[@]}; do
-			tpl_path=${tpl_paths[$ti]}
-			tpl_relative_path=${tpl_path#$tpl_root_path/}
-			tpl_name=$(basename "$tpl_path")
-			if [ "$tpl_relative_path" = $tpl_name ]; then
-				tpl_name=$(echo $tpl_name | sed 's/.yml//')
-			else
-				tpl_name=$(echo "$tpl_relative_path" | cut -d '/' -f1)
-			fi
-			tpl_name=$(echo $tpl_name | tr - _)
-			tpl_names+=($tpl_name)
-			if [ "$1" = build ]; then
-				tpl_suffixed_name=${tpl_name}_build
-			else
-				tpl_suffixed_name=$tpl_name
-			fi
-			tpl_pod_name=$(echo $tpl_suffixed_name | tr _ -)
-			tpl_pod_names+=($tpl_pod_name)
-			declare "${tpl_name}_host=$tpl_pod_name"
-		done
-		for ti in ${!tpl_paths[@]}; do
-			tpl_path=${tpl_paths[$ti]}
-			tpl_name=${tpl_names[$ti]}
-			tpl_pod_name=${tpl_pod_names[$ti]}
-			tpl_tmp_path=$app_apply_path/${tpl_path#$app_cloud_path/}
-			mkdir -p "$(dirname "$tpl_tmp_path")"
-			echo "$(compile_tpl "$tpl_path" $tpl_name $tpl_pod_name)" >> "$tpl_tmp_path"
-		done
-	done
-}
-
-compile_statics() {
-	cat <<-YML > "$app_secret_path"
-		apiVersion: v1
-		kind: Secret
-		metadata:
-		  name: docker
-		  labels:
-		    name: docker
-		type: kubernetes.io/dockerconfigjson
-		data:
-		  .dockerconfigjson: $(cat $user_auth_path | base64)
-	YML
-	cat <<-YML > "$app_namespace_path"
-		apiVersion: v1
-		kind: Namespace
-		metadata:
-		  name: $app_id
-		  labels:
-		    name: $app_id
-	YML
-	escaped_app_apply_path=$(echo "$app_apply_path/" | sed 's/\//\\\//g')
-	resources=$(find "$app_apply_path" -name '*.yml' | sed "s/$escaped_app_apply_path//g" | sed 's/^/  - /g')
-	cat <<-YML > "$app_kustomization_path"
-		namespace: $app_id
-		resources:
-		$resources
-	YML
-}
-
-compile_all() {
-	rm -rf "$app_tmp_path/"*
-	compile_tpls $1
-	compile_statics
-}
-
-edit() {
-	if [ -z $EDITOR ]; then
-		echo Edit $1 to setup environment
-	else
-		$EDITOR $1
-	fi
-}
-
-fallback_pod() {
-	echo ${1:-$rails_pod}
-}
-
-cloud_install() {
-	if [ ! -d $repo_path ]; then
-		begin Cloning Repository
-		mkdir -p $tmp_path
-		git clone git@github.com:chi-rb/chi-cloud.git $tmp_repo_path
-		sudo mv $tmp_repo_path $repo_path
-	fi
-
-	vm_install nested
-
-	if [ ! -f $user_auth_path ]; then
-		begin Authorizing hub.docker.com
-		authorize
-		cat <<-JSON > $user_auth_path
-			{
-			  "auths": {
-			    "https://index.docker.io/v1/": {
-			      "auth": "$(echo "$auth_user:$auth_pass\c" | base64)"
-			    }
-			  }
-			}
-		JSON
-	fi
-
-	if [ "$(which ruby)" != /usr/local/cloud/bin/ruby ]; then
-		cat <<-DOC
-			Add this into your shell rc file:
-			PATH=/usr/local/cloud/bin:$PATH
-
-			And then:
-			. /shell-rc-path
-		DOC
-	fi
-
-	complete
-}
-
-cloud_uninstall() {
-	vm_uninstall nested
-
-	if [ -d $user_cloud_path ]; then
-		begin Removing Settings
-		rm -rf $user_cloud_path
-	fi
-
-	if [ -d $repo_path ]; then
-		begin Removing Cloud
-		sudo rm -rf $repo_path
-	fi
-
-	complete
-}
-
-cloud_update() {
-	begin Updating Repository
-	current_path=$PWD
-	cd $repo_path
-	git pull
-	repo_current_branch=$(git branch | cut -d ' ' -f2)
-	repo_new_branch=${2:-master}
-	if [ $repo_current_branch != $repo_new_branch ]; then
-		git checkout $repo_new_branch
-	fi
-	cd "$current_path"
-
-	complete
-}
-
-cloud_init() {
-	db=postgres
-	while getopts 'd:' o; do
-		case "$o" in
-		d)
-			db=$OPTARG
-			if [ "$db" != postgres ] && [ "$db" != mysql ]; then
-				error Unknown database $db
-			fi
-		;;
-		esac
-	done
-	shift $((OPTIND-1))
-
-	set_app_paths "$@"
-
-	if ! app_cloud_exists; then
-		begin Using $db template
-		mkdir -p $tmp_path
-		rm -rf $tmp_base_path
-		cp -r $repo_base_path $tmp_base_path
-		patch_name=$db.patch
-		patch_path=$tmp_path/$patch_name
-		cp $repo_app_path/$patch_name $tmp_path
-		patch -s -p0 -d $tmp_path < $patch_path
-		rm $patch_path
-
-		if [ ! -d "$app_path" ]; then
-			begin Generating App Directory
-			mkdir -p "$(dirname "$app_path")"
-			mv $tmp_base_path "$app_path"
-			git init "$app_path"
-			note=false
-		else
-			begin Adding Cloud Directory
-			mv $tmp_cloud_path "$app_cloud_path"
-			mkdir -p "$app_samples_path"
-			for sample_path in "${app_sample_paths[@]}"; do
-				destination_path=$app_samples_path/$sample_path
-				mkdir -p "$(dirname "$destination_path")"
-				cp $tmp_base_path/$sample_path "$destination_path"
-			done
-			rm -rf $tmp_base_path
-			note=true
-		fi
-	else
-		error Already initialized
-	fi
-
-	begin Setting Application
-	echo "Enter name: \c"
-	read	app_name
-	echo "app_name=$app_name" >> "$app_base_path"
-	echo "Enter port: \c"
-	read	rails_cluster_port
-	echo "rails_cluster_port=$rails_cluster_port" >> "$app_dev_path"
-
-	begin Setting Docker Repository
-	echo "Enter rails repo: \c"
-	read rails_repo
-	echo "rails_repo=$rails_repo:\$app_env" >> "$app_base_path"
-
-	complete
-
-	if [ $note = true ]; then
-		echo "\nNOTE: You might need to tweak a few files, try using tmp/cloud/samples as a guideline"
-	fi
-}
-
-cloud_open() {
-	load_app
-	open "http://$vm_name:$rails_cluster_port"
-}
-
-cloud_bin() {
-	set_app_paths
-	path=$1
-	name=$(basename $path)
-	if app_cloud_exists; then
-		shift
-		bin_path=bin/$name
-		if [ -f $bin_path ]; then
-			cmd=$bin_path
-		else
-			cmd=$name
-		fi
-		cloud_exec -- $cmd $@
-	else
-		alt=$(which -a $name | grep -A 1 $path | tail -n 1)
-		if [ -z "$alt" ]; then
-			error "No alternative found for \`$name\`"
-		else
-			$alt $@
-		fi
-	fi
-}
-
-cloud_destroy() {
-	load_app
-
-	begin Removing Namespace
-	vm_kubectl delete namespace $app_id
-
-	begin Removing Cloud Directory
-	rm -rf "$app_cloud_path"
-
-	complete
-}
-
-cloud_build() {
-	load_app
-	build_names=$(app_kubectl get pods --no-headers=true | awk '/-build/{ORS=" "; print $1}')
-	if [ ! -z $build_names ]; then
-		app_kubectl delete pods $build_names
-	fi
-	compile_all build
-	vm_kubectl apply -k \"$app_apply_path\"
-	ok
-
-	echo "\nUse \`cloud log <pod-name>\` to see logs"
-}
-
-cloud_deploy() {
-	load_app
-	compile_all deploy
-	vm_kubectl apply -k \"$app_apply_path\"
-}
-
-cloud_undeploy() {
-	load_app
-	app_kubectl delete --all deployments
-}
-
-cloud_restart() {
-	load_app
-	pod=$(fallback_pod $1)
-	app_kubectl delete pod $(find_pod $pod)
-}
-
-cloud_shell() {
-	load_app
-	pod=$(fallback_pod $1)
-	pod_exec $pod /bin/bash
-}
-
-cloud_attach() {
-	load_app
-	pod=$(fallback_pod $1)
-	app_kubectl attach -it $(find_pod $pod)
-}
-
-cloud_tunnel() {
-	load_app
-	port=$(app_kubectl get service $1 --no-headers=true | awk '{ print $5 }' | sed 's/\/.*//')
-	app_kubectl port-forward $(find_pod $1) $port:$port
-}
-
-cloud_exec() {
-	load_app
-	if [ $# -gt 2 ] && [ "$2" = -- ]; then
-		pod=$1
-		shift 2
-	elif [ $# -gt 1 ] && [ "$1" = -- ]; then
-		shift
-	else
-		error Wrong format
-	fi
-	pod=$(fallback_pod $pod)
-	pod_exec $pod $@
-}
-
-cloud_status() {
-	load_app
-	if [ -z "$1" ]; then
-		app_kubectl get pods
-	else
-		pod=$(fallback_pod $1)
-		app_kubectl describe pod $(find_pod $pod)
-	fi
-}
-
-cloud_log() {
-	load_app
-	pod=$(fallback_pod $1)
-	app_kubectl logs -f $(find_pod $pod)
-}
-
-cloud_help() {
-	unknown $1
-	cat <<-DOC
-		Usage: cloud <command> [options]
-		Orchestrates Rails+Kubernetes Clouds.
-
-		Available commands:
-			install       Setups script
-			uninstall     Unsetups script
-			reinstall     Installs and uninstalls
-			update [tag]  Updates script
-			init [path]   Generates folder and initializes cloud
-			destroy       Removes cloud folder and destroy cloud
-			build         Builds docker images
-			deploy        Deploys app into the cloud
-			undeploy      Undeploys app from the cloud
-			status [pod]  Prints status of pods (all by default)
-			restart [pod] Restart pod (rails by default)
-			shell [pod]   Opens bash shell in pod (rails by default)
-			attach [pod]  Attachs into first process of pod (rails by default)
-			tunnel pod    Creates temporary tunnel into pod
-			exec [pod]    Executes shell command in pod (rails by default)
-			open          Opens browser pointing to app
-			log [pod]     Tails pod log (rails by default)
-			envs          Manages environments
-			vm            Manages virtual machine
-			help          Prints documentation
-	DOC
-}
-
-envs_list() {
-	ensure_app
-	list=$(ls -1 "$app_envs_path")
-	if [ -z "$list" ]; then
-		error No environments found
-	else
-		echo "$list"
-	fi
-}
-
-envs_add() {
-	ensure_app
-	if app_env_exists $1; then
-		error Environment $1 already exists
-	else
-		mkdir -p "$app_envs_path"
-		touch "$app_env_path"
-		cloud envs edit $1
-	fi
-}
-
-envs_edit() {
-	ensure_app_env $1
-	edit "$app_env_path"
-}
-
-envs_remove() {
-	ensure_app_env $1
-	rm -f "$app_env_path"
-}
-
-envs_help() {
-	unknown $1
-	cat <<-DOC
-		Usage: cloud envs <command> [options]
-
-		Available commands:
-			list          Lists envs
-			add           Adds env
-			edit          Edits env
-			remove        Removes env
-			help          Prints documentation
-	DOC
-}
-
-vm_install() {
-	if [ ! -d $repo_vm_path ]; then
-		begin Dowloading Images
-		mkdir $repo_vm_path
-		curl -o $repo_initrd_path $s3_initrd_url
-		curl -o $repo_vmlinuz_path $s3_vmlinuz_url
-		curl -o $repo_disk_path $s3_disk_url
-	fi
-
-	if [ ! -f $user_agent_path ]; then
-		vm_id=$(gen_id)
-		mkdir -p $user_cloud_path
-		echo "vm_id=$vm_id" >> $user_conf_path
-		vm_config nested
-	fi
-
-	if [ ! -f $user_disk_path ]; then
-		begin Creating Disk
-		tar xJvf $repo_disk_path -C $user_cloud_path
-	fi
-
-	if ! net_settings_exists; then
-		begin First Boot
-		while :; do
-			echo Waiting to receive ip
-			cloud vm start
-			mkdir -p $tmp_path
-			nc -l 1234 > $tmp_conf_path & sleep 30; kill $! >/dev/null 2>&1
-			if [ -z "$(cat $tmp_conf_path)" ]; then
-				vm_stop
-			else
-				break
-			fi
-		done
-		. $tmp_conf_path
-		cat $tmp_conf_path >> $user_conf_path
-		rm $tmp_conf_path
-	fi
-
-	if ! host_exists; then
-		begin Adding Hostname
-		echo $vm_ip $vm_name | sudo tee -a $hosts_path
-	fi
-
-	if ! export_exists; then
-		begin Sharing Home Directory
-		echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
-		sudo nfsd update
-		wait_ssh
-		vm_ssh sudo sh <<-SSH
-			echo "$mac_ip:$exports_home_path\t$HOME\tnfs local_lock=all\t0 0" >> /etc/fstab
-			mkdir -p $HOME
-			mount $HOME
-		SSH
-	fi
-
-	if [ "$1" != nested ]; then
-		complete
-	fi
-}
-
-vm_uninstall() {
-	if vm_running; then
-		begin Stopping Virtual Machine
-		vm_stop
-	fi
-
-	if [ -f $user_agent_path ]; then
-		begin Removing Agent
-		sudo rm $user_agent_path
-	fi
-
-	if [ "$1" != nested ]; then
-		if net_settings_exists; then
-			begin Removing Network Settings
-			for name in ${net_setting_names[@]}; do
-				sudo sed -i '' "/$name/d" $user_conf_path
-			done
-		fi
-
-		if [ -d $repo_vm_path ]; then
-			begin Removing Virtual Machine
-			rm -rf $repo_vm_path
-			rm -rf $user_disk_path
-		fi
-	fi
-
-	if host_exists; then
-		begin Removing Hostname
-		sudo sed -i '' "/$vm_name/d" $hosts_path
-	fi
-
-	if export_exists; then
-		begin Unsharing Home Directroy
-		escaped_exports_home_path=$(echo $exports_home_path | sed 's/\//\\\//g')
-		sudo sed -i '' "/$escaped_exports_home_path/d" $exports_path
-		sudo nfsd update
-	fi
-
-	if [ "$1" != nested ]; then
-		complete
-	fi
-}
-
-vm_config() {
-	begin Choosing Configuration
-	configure
-
-	begin Installing agent
+vm_install_agent() {
+	begin Installing Agent
 	mkdir -p $(dirname $user_agent_path)
 	cat <<-XML | sudo tee $user_agent_path >/dev/null
 		<?xml version="1.0" encoding="UTF-8"?>
@@ -888,7 +1239,11 @@ vm_config() {
 			</dict>
 		</plist>
 	XML
+}
 
+vm_config() {
+	vm_choose_settings
+	vm_install_agent
 	if [ "$1" != nested ]; then
 		vm_restart
 		complete
@@ -896,19 +1251,37 @@ vm_config() {
 }
 
 vm_start() {
-	sudo launchctl load -w $user_agent_path >/dev/null
+	begin Starting Virtual Machine
+	if ! vm_running; then
+		sudo launchctl load -w $user_agent_path >/dev/null
+		vm_wait_ssh		
+	else
+		echo Already running
+	fi
+	if [ "$1" != nested ]; then
+		complete
+	fi
 }
 
 vm_stop() {
-	sudo launchctl unload -w $user_agent_path >/dev/null 2>&1
-	while vm_running; do
-		sleep 5
-	done
+	begin Stopping Virtual Machine
+	if vm_running; then
+		sudo launchctl unload -w $user_agent_path >/dev/null 2>&1
+		while vm_running; do
+			sleep 5
+		done
+	else
+		echo Not running
+	fi
+	if [ "$1" != nested ]; then
+		complete
+	fi
 }
 
 vm_restart() {
-	vm_stop
-	vm_start
+	vm_stop nested
+	vm_start nested
+	complete
 }
 
 vm_exec() {
@@ -920,29 +1293,35 @@ vm_exec() {
 	vm_ssh $@
 }
 
-vm_update() {
+vm_update_packages() {
 	begin Updating Packages
 	vm_ssh sudo sh <<-SSH
 		apt update
-		DEBIAN_FRONTEND=noninteractive apt upgrade -y
+		DEBIAN_FRONTEND=noninteractive apt upgrade -y && apt autoremove -y
 	SSH
+}
 
+vm_update_k3s() {
 	begin Updating K3S
-	k3s_version_regex='v[0-9]+\.[0-9]+\.[0-9]+\+k3s.?[0-9]+'
-	k3s_current_version=$(vm_ssh k3s -v | grep -oE $k3s_version_regex)
-	k3s_latest_version=$(curl -s $k3s_latest_url | grep -oE $k3s_version_regex | head -n1)
-	if [ -z $k3s_current_version ] || [ $k3s_current_version != $k3s_latest_version ]; then
-		k3s_url="https://github.com/rancher/k3s/releases/download/$k3s_latest_version/k3s"
+	regex='v[0-9]+\.[0-9]+\.[0-9]+\+k3s.?[0-9]+'
+	current_version=$(vm_ssh k3s -v | grep -oE $regex)
+	latest_version=$(curl -s $k3s_latest_url | grep -oE $regex | head -n1)
+	if [ -z $current_version ] || [ $current_version != $latest_version ]; then
+		url="https://github.com/rancher/k3s/releases/download/$latest_version/k3s"
 		vm_ssh sudo sh <<-SSH
 			systemctl stop k3s
-			curl -Lo $k3s_path $k3s_url
+			curl -Lo $k3s_path $url
 			chmod +x $k3s_path
 			systemctl start k3s
 		SSH
 	else
-		echo Already up to date
+		echo Already updated
 	fi
+}
 
+vm_update() {
+	vm_update_packages
+	vm_update_k3s
 	complete
 }
 
@@ -952,16 +1331,284 @@ vm_help() {
 		Usage: cloud vm <command> [options]
 
 		Available commands:
-			install       
-			uninstall     
-			start         Boots virtual machine
-			stop          Halts virtual machine
-			restart       Stops and starts
+			install       Installs virtual machine
+			uninstall     Uninstalls virtual machine
+			start         Starts agent
+			stop          Stops agent
+			restart       Stops and starts agent
 			shell         Opens bash shell
 			exec          Executes command
 			update        Updates operating system
 			help          Prints documentation
 	DOC
+}
+
+# AWS
+
+aws() {
+	vm_ssh aws $@
+}
+
+aws_create_repository() {
+	if [ -z $rails_repo ]; then
+		rails_repo=$(
+			aws ecr create-repository \
+			--repository-name $cloud_name |
+			read_json repositoryUri
+		)
+		add_conf "$cloud_base_path" rails_repo
+	else
+		echo Already created
+	fi
+}
+
+aws_delete_repository() {
+	begin Delete Repository
+	if [ ! -z $rails_repo ]; then
+		aws ecr delete-repository --repository-name $cloud_name
+		del_conf "$cloud_base_path" rails_repo
+	else
+		echo Not found
+	fi
+}
+
+aws_create_role() {
+	begin Creating Role
+	if [ -z $aws_role_arn ]; then
+		aws_role_policy=$(cat <<-JSON
+			{
+				"Version": "2012-10-17",
+				"Statement": [
+					{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": "eks.amazonaws.com"
+						},
+						"Action": "sts:AssumeRole"
+					},
+					{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": "ec2.amazonaws.com"
+						},
+						"Action": "sts:AssumeRole"
+					}
+				]
+			}
+		JSON
+		)
+		aws_role_arn=$(
+			aws iam create-role \
+			--role-name $cloud_name \
+			--assume-role-policy-document \'$aws_role_policy\' |
+			read_json Arn
+		)
+		add_conf "$cloud_remote_path" aws_role_arn
+		for name in \
+		AmazonEKSClusterPolicy \
+		AmazonEKSServicePolicy \
+		AmazonEKSWorkerNodePolicy \
+		AmazonEKS_CNI_Policy \
+		AmazonEC2ContainerRegistryReadOnly \
+		AmazonRoute53FullAccess; do
+			aws iam attach-role-policy \
+			--role-name $cloud_name \
+			--policy-arn arn:aws:iam::aws:policy/$name
+		done
+	else
+		echo Already created
+	fi
+}
+
+aws_delete_role() {
+	begin Deleting Role
+	if [ ! -z $aws_role_arn ]; then
+		aws iam delete-role --role-name $cloud_name
+		del_conf "$cloud_remote_path" aws_role_arn
+	else
+		echo Not found
+	fi
+}
+
+aws_create_vpc() {
+	begin Creating VPC
+	if [ -z $aws_vpc_id ]; then
+		aws_vpc_id=$(
+			aws ec2 create-vpc --cidr-block 10.0.0.0/16 |
+			read_json VpcId 
+		)
+		add_conf "$cloud_remote_path" aws_vpc_id
+		for name in support hostnames; do
+			aws ec2 modify-vpc-attribute \
+			--enable-dns-$name \
+			--vpc-id $aws_vpc_id
+		done
+		aws_route_table_id=$(
+			aws ec2 describe-route-tables \
+			--filters "Name=vpc-id,Values=$aws_vpc_id" |
+			read_json RouteTableId
+		)
+		add_conf "$cloud_remote_path" aws_route_table_id
+	else
+		echo Already created
+	fi
+}
+
+aws_delete_vpc() {
+	begin Deleting VPC
+	if [ ! -z $aws_vpc_id ]; then
+		aws ec2 delete-vpc --vpc-id $aws_vpc_id
+		del_conf "$cloud_remote_path" aws_vpc_id
+	else
+		echo Not found
+	fi
+}
+
+aws_create_gateway() {
+	aws_gateway_id=$(
+		aws ec2 create-internet-gateway |
+		read_json InternetGatewayId
+	)
+	add_conf "$cloud_remote_path" aws_gateway_id
+	aws ec2 attach-internet-gateway \
+	--vpc-id $aws_vpc_id \
+	--internet-gateway-id $aws_gateway_id
+	aws ec2 create-route \
+	--route-table-id $aws_route_table_id \
+	--gateway-id $aws_gateway_id \
+	--destination-cidr-block 0.0.0.0/0
+}
+
+aws_delete_gateway() {
+	begin Deleting Gateway
+	if [ ! -z $aws_gateway_id ]; then
+		aws ec2 delete-gateway --internet-gateway-id $aws_gateway_id
+		del_conf "$cloud_remote_path" aws_gateway_id
+	else
+		echo Not found
+	fi
+}
+
+aws_create_subnet() {
+	begin Creating Subnet$1
+	name=aws_subnet$1_id
+	block=10.0.$1.0
+	if []; then
+		aws_subnet2_id=$(
+			aws ec2 create-subnet \
+			--vpc-id ${!name} \
+			--cidr-block $block/24 \
+			--availability-zone $2 |
+			read_json SubnetId
+		)
+		add_conf "$cloud_remote_path" $name
+	else
+		echo Already created
+	fi
+}
+
+aws_delete_subnet() {
+	begin Deleting Subnet$1
+	name=aws_subnet$1_id
+	if [ -z ${!name} ]; then
+		aws ec2 delete-subnet --subnet-id ${!name}
+		del_conf "$cloud_remote_path" $name
+	else
+		echo Not found
+	fi
+}
+
+aws_create_cluster() {
+	begin Creating Cluster
+	if [ -z $aws_cluster_name ]; then
+		aws_cluster_name=$cloud_id
+		aws eks create-cluster \
+		--name $aws_cluster_name \
+		--role-arn $aws_role_arn \
+		--resources-vpc-config \
+		subnetIds=$aws_subnet1_id,$aws_subnet2_id,endpointPrivateAccess=true,endpointPublicAccess=true \
+		>/dev/null
+		echo Waiting cluster to be active
+		wait_for aws_cluster_status ACTIVE
+		add_conf "$cloud_remote_path" aws_cluster_name
+	else
+		echo Already created
+	fi
+}
+
+aws_cluster_status() {
+	aws eks describe-cluster \
+	--name $cloud_name |
+	read_json status
+}
+
+aws_create_kubeconfig() {
+	begin Creating Kubeconfig
+	if [ -z $aws_kubeconfig_path ]; then
+		aws_kubeconfig_path=/home/hacker/.kube/$cloud_name
+		vm_ssh sudo sh <<-SSH
+			mkdir -p ~/.kube
+			rm -f $aws_kubeconfig_path
+			aws eks update-kubeconfig \
+			--name $cloud_name \
+			--kubeconfig $aws_kubeconfig_path \
+			>/dev/null
+		SSH
+		add_conf "$cloud_base_path" aws_kubeconfig_path
+	else
+		echo Already created
+	fi
+}
+
+aws_create_nodegroup() {
+	begin Creating Nodegroup
+	if [ -z $aws_nodegroup_name ]; then
+		aws_nodegroup_name=default
+		aws eks create-nodegroup \
+		--cluster-name $cloud_name \
+		--node-role $aws_role_arn \
+		--nodegroup-name $aws_nodegroup_name \
+		--subnets $aws_subnet1_id $aws_subnet2_id \
+		--scaling-config minSize=1,maxSize=1,desiredSize=1 \
+		>/dev/null
+		add_conf "$cloud_remote_path" aws_nodegroup_name
+		echo Waiting nodegroup to be active
+		wait_for aws_nodegroup_status ACTIVE
+	else
+		echo Already created
+	fi
+}
+
+aws_nodegroup_status() {
+	aws eks describe-nodegroup \
+	--cluster-name $cloud_name \
+	--nodegroup-name $aws_nodegroup_name |
+	read_json status
+}
+
+aws_create_cloud() {
+	aws_create_repository
+	aws_create_role
+	aws_create_vpc
+	aws_create_gateway
+	aws_create_subnet 1 us-east-2a
+	aws_create_subnet 2 us-east-2b
+	aws_create_cluster
+	aws_create_kubeconfig
+	aws_create_nodegroup
+}
+
+aws_delete_cloud() {
+	aws_delete_nodegroup
+	aws_delete_kubeconfig
+	aws_delete_cluster
+	aws_delete_route_table
+	aws_delete_subnet 1
+	aws_delete_subnet 2
+	aws_delete_gateway
+	aws_delete_vpc
+	aws_delete_role
+	aws_delete_repository
 }
 
 if [ -f $user_conf_path ]; then
@@ -970,199 +1617,123 @@ fi
 
 case $1 in
 install)
-
 	cloud_install
-
 ;;
 uninstall)
-
 	cloud_uninstall
-
 ;;
 update)
-
 	cloud_update
-
 ;;
 init)
-
 	shift
 	cloud_init "$@"
-
 ;;
 open)
-
 	cloud_open
-
 ;;
 destroy)
-
 	cloud_destroy
-
 ;;
 bin)
-
 	shift 
 	cloud_bin $@
-
 ;;
 envs)
-
 	case $2 in
 	''|list)
-
 		envs_list
-
 	;;
 	add)
-
 		envs_add $3
-
 	;;
 	edit)
-
 		envs_edit $3
-
 	;;
-	remove)
-
-		envs_remove $3
-
+	delete)
+		envs_delete $3
 	;;
 	help)
-
 		envs_help
-
 	;;
 	*)
-
 		envs_help $1
-
 	;;
 	esac
-
 ;;
 build)
-
 	cloud_build
-
 ;;
 deploy)
-
 	cloud_deploy
-
 ;;
 undeploy)
-
 	cloud_undeploy
-
 ;;
 restart)
-
 	cloud_restart $2
-
 ;;
 shell)
-
 	cloud_shell $2
-
 ;;
 attach)
-
 	cloud_attach $2
-
 ;;
 tunnel)
-
 	cloud_tunnel $2
-
 ;;
 exec)
-
 	shift
 	cloud_exec $@
-
 ;;
 status)
-
 	cloud_status $2
-
 ;;
 log)
-
 	cloud_log $2
-
 ;;
 vm)
-
 	case $2 in
 	install)
-
 		vm_install
-
 	;;
 	uninstall)
-
 		vm_uninstall
-
 	;;
 	config)
-
 		vm_config
-
 	;;
 	start)
-
 		vm_start
-
 	;;
 	stop)
-
 		vm_stop
-
 	;;
 	restart)
-
 		vm_restart
-
 	;;
 	shell)
-
 		vm_ssh
-
 	;;
 	exec)
-
 		shift 2
 		vm_exec $@
-
 	;;
 	update)
-
 		vm_update
-
 	;;
 	help)
-
 		vm_help
-
 	;;
 	*)
-
 		vm_help $2
-
 	;;
 	esac
-
 ;;
 help)
-
 	cloud_help
-
 ;;
 *)
-
 	cloud_help $1
-
 ;;
 esac
