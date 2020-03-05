@@ -151,6 +151,7 @@ add_conf() {
 			conf="$2=$3"
 		fi
 	fi
+	mkdir -p $(dirname $1)
 	echo "$conf" >> $1
 }
 
@@ -596,31 +597,35 @@ cloud_update_rc() {
 
 cloud_install() {
 	cloud_clone
-	cloud_authorized_nfsd
-	cloud_authorized_xhyve
+	cloud_authorize_nfsd
+	cloud_authorize_xhyve
 	vm_install nested
 	cloud_update_rc
 	complete
 }
 
 cloud_delete_settings() {
-	rm -rf $user_cloud_path
+	begin Deleting Settings
+	if [ -d $user_cloud_path ]; then
+		rm -rf $user_cloud_path
+	else
+		echo Not found
+	fi
 }
 
 cloud_delete_repo() {
-	sudo rm -rf $repo_path
+	begin Deleting Cloud
+	if [ -d $repo_path ]; then
+		sudo rm -rf $repo_path
+	else
+		echo Not found
+	fi
 }
 
 cloud_uninstall() {
 	vm_uninstall nested
-	if [ -d $user_cloud_path ]; then
-		begin Deleting Settings
-		cloud_delete_settings
-	fi
-	if [ -d $repo_path ]; then
-		begin Deleting Cloud
-		cloud_delete_repo
-	fi
+	cloud_delete_settings
+	cloud_delete_repo
 	complete
 }
 
@@ -701,9 +706,8 @@ cloud_generate() {
 }
 
 cloud_init() {
-	db=$(cloud_generate_db "$@")
 	cloud_set_paths "$@"
-	cloud_generate $db
+	cloud_generate
 	cloud_choose_settings
 	cloud_set_remote
 	complete
@@ -1041,7 +1045,7 @@ vm_create_disk() {
 
 vm_first_boot() {
 	begin First Boot
-	if ! vm_settings_exists; then
+	if ! vm_net_exists; then
 		while :; do
 			echo Waiting to receive ip
 			cloud vm start
@@ -1120,7 +1124,7 @@ vm_delete_agent() {
 
 vm_delete_net() {
 	begin Deleting Network Settings
-	if vm_settings_exists; then
+	if vm_net_exists; then
 		for name in ${net_setting_names[@]}; do
 			sudo sed -i '' "/$name/d" $user_conf_path
 		done
@@ -1160,7 +1164,7 @@ vm_unshare_home() {
 }
 
 vm_uninstall() {
-	vm_stop
+	vm_stop nested
 	vm_delete_agent
 	if [ "$1" != nested ]; then
 		vm_delete_net
