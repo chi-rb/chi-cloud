@@ -160,7 +160,7 @@ del_conf() {
 }
 
 bin_authorized() {
-	sudo sqlite3 "$tcc_path" "select 1 from access where service=\"kTCCServiceSystemPolicyAllFiles\" and client=\"$1\""
+	sudo sqlite3 "$tcc_path" "select 1 from access where service=\"kTCCServiceSystemPolicyAllFiles\" and client=\"$1\"" | grep 1 >/dev/null 2>&1 
 }
 
 show_file() {
@@ -582,7 +582,7 @@ cloud_authorize_xhyve() {
 cloud_update_rc() {
 	begin Prepending PATH
 	ruby=$(which ruby)
-	if [ $ruby != $ruby_path ]; then
+	if [ $ruby != $repo_ruby_path ]; then
 		cat <<-DOC
 			Add this into your shell rc file:
 			PATH=/usr/local/cloud/bin:$PATH
@@ -1048,7 +1048,7 @@ vm_first_boot() {
 	if ! vm_net_exists; then
 		while :; do
 			echo Waiting to receive ip
-			cloud vm start
+			vm_start nested
 			mkdir -p $tmp_path
 			nc -l 1234 > $tmp_conf_path & sleep 30; kill $! >/dev/null 2>&1
 			if [ -z "$(cat $tmp_conf_path)" ]; then
@@ -1079,7 +1079,6 @@ vm_share_home() {
 	if ! export_exists; then
 		echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
 		sudo nfsd update
-		vm_wait_ssh
 		vm_ssh sudo sh <<-SSH
 			echo "$mac_ip:$exports_home_path\t$HOME\tnfs local_lock=all\t0 0" >> /etc/fstab
 			mkdir -p $HOME
