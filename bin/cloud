@@ -7,6 +7,7 @@ hosts_path=/etc/hosts
 bin_path=/usr/local/bin
 nfsd_path=/sbin/nfsd
 tcc_path=/Library/Application\ Support/com.apple.TCC/TCC.db
+terminal_path=com.apple.Terminal
 rails_pod=rails
 
 agent_name=com.cloud
@@ -160,7 +161,9 @@ del_conf() {
 }
 
 bin_authorized() {
-	sudo sqlite3 "$tcc_path" "select 1 from access where service=\"kTCCServiceSystemPolicyAllFiles\" and client=\"$1\"" | grep 1 >/dev/null 2>&1 
+	sudo sqlite3 \
+	"$tcc_path" "select 1 from access where service=\"kTCCServiceSystemPolicyAllFiles\" and client=\"$1\"" |
+	grep 1 >/dev/null 2>&1 
 }
 
 show_file() {
@@ -560,6 +563,17 @@ cloud_clone() {
 	fi
 }
 
+cloud_authorize_terminal() {
+	begin Authorizing Terminal
+	if ! bin_authorized $terminal_path; then
+		authorize_bin $terminal_path
+		echo Restart terminal and run the script again
+		exit
+	else
+		echo Already authorized
+	fi
+}
+
 cloud_authorize_nfsd() {
 	begin Authorizing NFSD
 	if ! bin_authorized $nfsd_path; then
@@ -597,6 +611,7 @@ cloud_update_rc() {
 
 cloud_install() {
 	cloud_clone
+	cloud_authorize_terminal
 	cloud_authorize_nfsd
 	cloud_authorize_xhyve
 	vm_install nested
@@ -808,6 +823,11 @@ cloud_import_images() {
 	fi
 }
 
+cloud_redeploy() {
+	cloud_undeploy nested
+	cloud_deploy
+}
+
 cloud_deploy() {
 	cloud_load
 	cloud_import_images
@@ -820,7 +840,9 @@ cloud_undeploy() {
 	cloud_load
 	begin Undeploying
 	cloud_kubectl delete --all deployments
-	complete
+	if [ "$1" != nested ]; then
+		complete
+	fi
 }
 
 cloud_restart() {
@@ -1672,6 +1694,9 @@ deploy)
 ;;
 undeploy)
 	cloud_undeploy
+;;
+redeploy)
+	cloud_redeploy
 ;;
 restart)
 	cloud_restart $2
