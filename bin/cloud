@@ -2,7 +2,7 @@
 
 # SETTINGS
 
-context=${CLOUD:-local}
+wait_count=15
 hosts_path=/etc/hosts
 bin_path=/usr/local/bin
 nfsd_path=/sbin/nfsd
@@ -41,6 +41,7 @@ repo_ruby_path=$repo_bin_path/ruby
 
 user_cloud_path=$HOME/.cloud
 user_conf_path=$user_cloud_path/conf
+user_pid_path=$user_cloud_path/pid
 user_disk_path=$user_cloud_path/disk.img
 user_agent_path=$HOME/Library/LaunchAgents/$agent_filename
 
@@ -48,6 +49,7 @@ vm_user=hacker
 vm_name=cloud
 vm_mem=4G
 vm_cpus=4
+vm_home_path=/home/hacker
 
 k3s_latest_url=https://github.com/rancher/k3s/releases/latest
 k3s_path=/usr/local/bin/k3s
@@ -76,10 +78,20 @@ read_json() {
 }
 
 wait_for() {
-	while [ "$($1)" != $2 ]; do
-		echo .
-		sleep 30
+	while :; do
+		printf .
+		sleep $wait_count
+		if [ -z $2 ]; then
+			if $1; then
+				break
+			fi
+		else
+			if [ "$($1)" = $2 ]; then
+				break
+			fi
+		fi
 	done
+	echo
 }
 
 ok() {
@@ -139,30 +151,38 @@ edit() {
 	if [ -z $EDITOR ]; then
 		echo Edit $1 to setup environment
 	else
-		$EDITOR $1
+		$EDITOR "$1"
 	fi
 }
 
 ensure_file() {
-	mkdir -p $(dirname $1)
-	touch $1
+	mkdir -p "$(dirname "$1")"
+	touch "$1"
 }
 
 add_conf() {
-	if [ $2 = - ]; then
-		conf=$(cat -)
-	else
-		if [ -z $3 ]; then
-			conf="$2=${!2}"
+	if [ -f "$1" ]; then
+		if [ $2 = - ]; then
+			conf=$(cat -)
 		else
-			conf="$2=$3"
+			if [ -z $3 ]; then
+				conf="$2=${!2}"
+			else
+				conf="$2=$3"
+			fi
 		fi
+		echo "$conf" | sudo tee -a "$1" >/dev/null
+	else
+		error "File $1 don't exist"
 	fi
-	echo "$conf" | sudo tee -a $1 >/dev/null
 }
 
 delete_conf() {
-	sudo sed -i '' "/$2/d" $1
+	if [ -f "$1" ]; then
+		sudo sed -i '' "/$2/d" "$1"
+	else
+		error "File $1 don't exist"
+	fi
 }
 
 bin_authorized() {
@@ -220,15 +240,34 @@ update_nfsd() {
 	sudo $nfsd_path update
 }
 
-start_agent() {
+# AGENT
+
+agent_start() {
 	sudo launchctl load -w $user_agent_path >/dev/null
+	sudo launchctl list | grep $agent_name | awk '{ print $1 }' > $user_pid_path
 }
 
-stop_agent() {
+agent_stop() {
 	sudo launchctl unload -w $user_agent_path >/dev/null 2>&1
 	while agent_running; do
-		sleep 5
+		sleep $wait_count
 	done
+	rm $user_pid_path
+}
+
+agent_running() {
+	if [ -f $user_pid_path ]; then
+		vm_pid=$(cat $user_pid_path)
+		ps -p $vm_pid >/dev/null 2>&1
+	else
+		return 1
+	fi
+}
+
+agent_ensure() {
+	if ! agent_running; then
+		error Agent not running
+	fi
 }
 
 # COMPILE
@@ -287,21 +326,55 @@ compile_tpls() {
 		pod_names+=($pod_name)
 		declare "${name}_host=$pod_name"
 		declare "${name}_name=$pod_name"
+		if [ -f "$cloud_build_path/$name/Dockerfile" ]; then
+			image=$name-$cloud_env
+			if [ $cloud_context != local ]; then
+				declare "${name}_image=$cloud_repo_url:$image"
+			else
+				declare "${name}_image=cloud:32000/$image"
+			fi
+		fi
 	done
 	for i in ${!paths[@]}; do
 		path=${paths[$i]}
 		name=${names[$i]}
 		pod_name=${pod_names[$i]}
-		apply_path=$cloud_apply_path/${path#$cloud_compile_path/}
+		apply_path=$cloud_apply_path/${path#"$cloud_compile_path"/}
 		mkdir -p "$(dirname "$apply_path")"
 		echo "$(compile_tpl "$path" $name $pod_name)" >> "$apply_path"
 	done
 }
 
 compile_statics() {
-	if [ $context = remote ]; then
+	if [ $cloud_context != local ]; then
 		case $cloud_provider in
 		aws)
+			if [ ! -z $cloud_kubeconfig_path ]; then
+				cat <<-YML > "$cloud_storage_class_path"
+					kind: StorageClass
+					apiVersion: storage.k8s.io/v1
+					metadata:
+					  name: efs-sc
+					provisioner: efs.csi.aws.com
+				YML
+				cat <<-YML > "$cloud_volume_path"
+					apiVersion: v1
+					kind: PersistentVolume
+					metadata:
+					  name: efs-pv
+					spec:
+					  capacity:
+					    storage: 1Gi
+					  volumeMode: Filesystem
+					  accessModes:
+					  - ReadWriteMany
+					  persistentVolumeReclaimPolicy: Retain
+					  storageClassName: efs-sc
+					  csi:
+					    driver: efs.csi.aws.com
+					    volumeHandle: $aws_file_system_id
+				YML
+			fi
 			cat <<-YML > "$cloud_docker_path"
 				apiVersion: v1
 				kind: ConfigMap
@@ -311,20 +384,16 @@ compile_statics() {
 				  config.json: |
 				    { "credsStore": "ecr-login" }
 			YML
-			case $cloud_provider in
-			aws)
-				credentials=$(vm_ssh cat /home/hacker/.aws/credentials | base64)
-				cat <<-YML > "$cloud_aws_path"
-					apiVersion: v1
-					kind: Secret
-					type: Opaque
-					metadata:
-					  name: aws
-					data:
-					  credentials: $credentials
-				YML
-			;;
-			esac
+			credentials=$(vm_ssh cat $aws_credentials_path | base64)
+			cat <<-YML > "$cloud_aws_path"
+				apiVersion: v1
+				kind: Secret
+				type: Opaque
+				metadata:
+				  name: aws
+				data:
+				  credentials: $credentials
+			YML
 		;;
 		esac
 	fi
@@ -336,8 +405,22 @@ compile_statics() {
 		  labels:
 		    name: $cloud_id
 	YML
-	escaped_cloud_apply_path=$(echo "$cloud_apply_path/" | sed 's/\//\\\//g')
-	resources=$(find "$cloud_apply_path" -name '*.yml' | sed "s/$escaped_cloud_apply_path//g" | sed 's/^/  - /g')
+	cat <<-YML > "$cloud_claim_path"
+		apiVersion: v1
+		kind: PersistentVolumeClaim
+		metadata:
+		  name: data
+		  labels:
+		    name: data
+		spec:
+		  storageClassName: $cloud_storage_class
+		  accessModes:
+		  - $cloud_access_mode
+		  resources:
+		    requests:
+		      storage: 1Gi
+	YML
+	resources=$(ls "$cloud_apply_path" | sed 's/^/  - /g')
 	cat <<-YML > "$cloud_kustomization_path"
 		namespace: $cloud_id
 		resources:
@@ -349,45 +432,15 @@ compile() {
 	begin Compiling YAMLs
 	find "$cloud_tmp_path" ! -name 'images' -maxdepth 1 -mindepth 1 -exec rm -rf {} +
 	mkdir -p "$cloud_compile_path"
+	paths=$(find "$cloud_deploy_path/base" "$cloud_deploy_path/$cloud_env" -name \*.yml)
 	case $1 in
 	build)
-		while read dir_path; do
-			name=$(basename "$dir_path")
-			target_path="$cloud_compile_path/$name.yml"
-			mkdir -p "$cloud_images_path"
-			case $context in
-			local)
-				cat <<-YML > "$target_path"
-					apiVersion: v1
-					kind: Pod
-					metadata:
-					  name: {{ name }}-build
-					  labels:
-					    name: {{ name }}-build
-					spec:
-					  restartPolicy: Never
-					  containers:
-					  - image: gcr.io/kaniko-project/executor:latest
-					    name: kaniko
-					    args:
-					    - --no-push
-					    - --tarPath=/rails/tmp/cloud/images/{{ name }}.tar
-					    - --destination=image
-					    - --context=/rails/cloud/build/rails
-					    - --dockerfile=/Dockerfile
-					    - --build-arg=RAILS_ENV={{ cloud_env }}
-					    volumeMounts:
-					    - name: rails
-					      mountPath: /rails
-					  volumes:
-					  - name: rails
-					    hostPath:
-					      path: {{ app_path }}
-				YML
-			;;
-			remote)
-				case $cloud_provider in
-				aws)
+		while read path; do
+			name=$(basename "$path" | sed 's/\.yml//')
+			if [ -d "$cloud_build_path/$name" ]; then
+				target_path="$cloud_compile_path/$name.yml"
+				mkdir -p "$cloud_images_path"
+				if [ $cloud_context = local ]; then
 					cat <<-YML > "$target_path"
 						apiVersion: v1
 						kind: Pod
@@ -395,46 +448,76 @@ compile() {
 						  name: {{ name }}-build
 						  labels:
 						    name: {{ name }}-build
+						    type: build
 						spec:
 						  restartPolicy: Never
 						  containers:
 						  - image: gcr.io/kaniko-project/executor:latest
 						    name: kaniko
 						    args:
-						    - --destination={{ repo }}
-						    - --context=/rails/cloud/build/{{ name }}
-						    - --dockerfile=/Dockerfile
+						    - --destination={{ image }}
+						    - --insecure
+						    - --context=/mnt
+						    - --dockerfile=/cloud/build/{{ name }}/Dockerfile
 						    - --build-arg=RAILS_ENV={{ cloud_env }}
 						    volumeMounts:
-						    - name: rails
-						      mountPath: /rails
-						    - name: docker
-						      mountPath: /kaniko/.docker/
-						    - name: aws
-						      mountPath: /root/.aws/
+						    - name: mnt
+						      mountPath: /mnt
 						  volumes:
-						  - name: rails
+						  - name: mnt
 						    hostPath:
 						      path: {{ app_path }}
-						  - name: docker
-						    configMap:
-						      name: docker
-						  - name: aws
-						    secret:
-						      secretName: aws
 					YML
-				;;
-				esac
-			;;
-			esac
-		done <<< "$(find "$cloud_build_path" -type d -maxdepth 1 -mindepth 1)"
+				else
+					case $cloud_provider in
+					aws)
+						cat <<-YML > "$target_path"
+							apiVersion: v1
+							kind: Pod
+							metadata:
+							  name: {{ name }}-build
+							  labels:
+							    name: {{ name }}-build
+							    type: build
+							spec:
+							  restartPolicy: Never
+							  containers:
+							  - image: gcr.io/kaniko-project/executor:latest
+							    name: kaniko
+							    args:
+							    - --destination={{ image }}
+							    - --context=/mnt
+							    - --dockerfile=/cloud/build/{{ name }}/Dockerfile
+							    - --build-arg=RAILS_ENV={{ cloud_env }}
+							    volumeMounts:
+							    - name: mnt
+							      mountPath: /mnt
+							    - name: docker
+							      mountPath: /kaniko/.docker/
+							    - name: aws
+							      mountPath: /root/.aws/
+							  volumes:
+							  - name: mnt
+							    hostPath:
+							      path: {{ app_path }}
+							  - name: docker
+							    configMap:
+							      name: docker
+							  - name: aws
+							    secret:
+							      secretName: aws
+						YML
+					;;
+					esac
+				fi
+			fi
+		done <<< "$paths"
 	;;
 	deploy)
-		while read yml_path; do
-			name=$(basename "$yml_path")
-			target_path="$cloud_compile_path/$name"
-			cp "$yml_path" "$target_path"
-		done <<< "$(find "$cloud_deploy_path/base" "$cloud_deploy_path/$cloud_env" -name \*.yml)"
+		while read path; do
+			name=$(basename "$path")
+			cp "$path" "$cloud_compile_path/$name"
+		done <<< "$paths"
 	;;
 	esac
 	compile_tpls
@@ -467,17 +550,34 @@ cloud_dir_exists() {
 }
 
 cloud_load() {
+	agent_ensure
 	cloud_set_paths
-	cloud_env=${RAILS_ENV:-development}
-	if [ $context = remote ]; then
-		. "$cloud_remote_path"
-	else
-		. "$cloud_local_path"
-	fi
-	cloud_ensure_env $cloud_env
+	cloud_ensure_dir
+	cloud_ensure_context
+	cloud_ensure_env
+	cloud_boot
+}
+
+cloud_boot() {
+	. "$cloud_context_path"
 	. "$cloud_base_path"
 	. "$cloud_env_path"
 	cloud_id=$cloud_name-$cloud_env
+	cloud_pull=Always
+	if [ ! -z $cloud_provider ]; then
+		cloud_access_mode=ReadWriteMany
+		case $cloud_provider in
+		aws)
+			cloud_storage_class=efs-sc
+			cloud_kubeconfig_path=$vm_home_path/.kube/aws-$cloud_id
+			aws_credentials_path=$vm_home_path/.aws/credentials
+			aws_profile=$cloud_name-$cloud_context
+		;;
+		esac
+	else
+		cloud_access_mode=ReadWriteOnce
+		cloud_storage_class=local-path
+	fi
 }
 
 cloud_ensure_dir() {
@@ -486,21 +586,23 @@ cloud_ensure_dir() {
 	fi
 }
 
-cloud_env_exists() {
-	if [ ! -z $1 ]; then
-		cloud_env_path=$cloud_envs_path/$1
-		if [ ! -f "$cloud_env_path" ]; then
-			return 1
-		fi
-	else
-		error No environment specified
+cloud_context_exists() {
+	test -f "$cloud_context_path"
+}
+
+cloud_ensure_context() {
+	if ! cloud_context_exists; then
+		error Context not found
 	fi
 }
 
+cloud_env_exists() {
+	test -f "$cloud_env_path"
+}
+
 cloud_ensure_env() {
-	cloud_ensure_dir
-	if ! cloud_env_exists $1; then
-		error Environment $1 not exists
+	if ! cloud_env_exists; then
+		error Environment not found
 	fi
 }
 
@@ -516,43 +618,36 @@ cloud_choose_port() {
 	if [ -z $rails_cluster_port ]; then
 		echo "Enter port: \c"
 		read	rails_cluster_port
-		add_conf "$cloud_dev_path" rails_cluster_port
-	fi
-}
-
-cloud_choose_provider() {
-	if [ -z $cloud_provider ]; then
-		echo 'Choose provider: Amazon (A)?'
-		read cloud_provider
-		case $cloud_provider in
-		A|a|'')
-			cloud_provider=aws
-		;;
-		esac
-		add_conf "$cloud_base_path" cloud_provider
-	fi
-}
-
-cloud_set_remote() {
-	case $cloud_provider in
-	aws)
-		aws_create_cloud
-	;;
-	esac
-}
-
-cloud_choose_settings() {
-	begin Choosing Settings
-	if [ -z $cloud_name ] || [ -z $rails_cluster_port ] || [ -z $cloud_provider ]; then
-		cloud_choose_name
-		cloud_choose_port
-		cloud_choose_provider
-	else
-		echo Already setted
+		add_conf "$cloud_env_path" rails_cluster_port
 	fi
 }
 
 cloud_set_paths() {
+	while getopts 'c:e:' o; do
+		case "$o" in
+		c)
+			cloud_context=$OPTARG
+		;;
+		e)
+			cloud_env=$OPTARG
+		;;
+		esac
+	done
+	if [ -z $cloud_context ]; then
+		cloud_context=${CLOUD:-local}
+	fi
+	if [ -z $cloud_env ]; then
+		if [ -z $RAILS_ENV ]; then
+			if [ $cloud_context != local ]; then
+				cloud_env=production
+			else
+				cloud_env=development
+			fi
+		else
+			cloud_env=$RAILS_ENV
+		fi
+	fi
+	shift $((OPTIND-1))
 	if [ ! -z "$1" ]; then
 		if [ ${1:0:1} = / ]; then
 			app_path=$1
@@ -563,21 +658,25 @@ cloud_set_paths() {
 		app_path=$PWD
 	fi
 	cloud_path=$app_path/cloud
+	cloud_contexts_path=$cloud_path/contexts
+	cloud_local_path=$cloud_contexts_path/local
+	cloud_context_path=$cloud_contexts_path/$cloud_context
+	cloud_envs_path=$cloud_path/envs
+	cloud_base_path=$cloud_envs_path/base
+	cloud_dev_path=$cloud_envs_path/development
+	cloud_prod_path=$cloud_envs_path/production
+	cloud_env_path=$cloud_envs_path/$cloud_env
 	cloud_tmp_path=$app_path/tmp/cloud
 	cloud_images_path=$cloud_tmp_path/images
 	cloud_compile_path=$cloud_tmp_path/compile
 	cloud_apply_path=$cloud_tmp_path/apply
 	cloud_docker_path=$cloud_apply_path/docker.yml
+	cloud_storage_class_path=$cloud_apply_path/storage_class.yml
+	cloud_volume_path=$cloud_apply_path/volume.yml
+	cloud_claim_path=$cloud_apply_path/claim.yml
 	cloud_aws_path=$cloud_apply_path/aws.yml
 	cloud_namespace_path=$cloud_apply_path/namespace.yml
 	cloud_kustomization_path=$cloud_apply_path/kustomization.yml
-	cloud_contexts_path=$cloud_path/contexts
-	cloud_local_path=$cloud_contexts_path/local
-	cloud_remote_path=$cloud_contexts_path/remote
-	cloud_envs_path=$cloud_path/envs
-	cloud_base_path=$cloud_envs_path/base
-	cloud_dev_path=$cloud_envs_path/development
-	cloud_prod_path=$cloud_envs_path/production
 	cloud_build_path=$cloud_path/build
 	cloud_deploy_path=$cloud_path/deploy
 	cloud_snippets_path=$cloud_deploy_path/snippets
@@ -742,6 +841,16 @@ cloud_generate_dir() {
 	echo You might need to tweak a few files, try using tmp/cloud/samples as a guideline
 }
 
+cloud_choose_settings() {
+	begin Choosing Settings
+	if [ -z $cloud_name ] || [ -z $rails_cluster_port ] || [ -z $cloud_provider ]; then
+		cloud_choose_name
+		cloud_choose_port
+	else
+		echo Already setted
+	fi
+}
+
 cloud_generate() {
 	begin Generating Directory
 	if ! cloud_dir_exists; then
@@ -763,7 +872,6 @@ cloud_init() {
 	cloud_set_paths "$@"
 	cloud_generate
 	cloud_choose_settings
-	cloud_set_remote
 	complete
 }
 
@@ -823,77 +931,56 @@ cloud_apply() {
 
 cloud_clear_builds() {
 	begin Clearing Builds
-	build_names=$(cloud_kubectl get pods --no-headers=true | awk '/-build/{ORS=" "; print $1}')
-	if [ ! -z "$build_names" ]; then
-		cloud_kubectl delete pods $build_names
-	fi
+	cloud_kubectl delete pods -l type=build
+}
+
+cloud_log_builds() {
+	begin Logging Builds
+	cloud_kubectl wait pod \
+	-l type=build \
+	--for condition=Ready \
+	--timeout=24h
+	cloud_kubectl logs -f -l type=build
 }
 
 cloud_build() {
 	cloud_load
+	if [ $cloud_context != local ]; then
+		unset cloud_kubeconfig_path
+	fi
 	cloud_clear_builds
 	compile build
 	cloud_apply
+	cloud_log_builds
 	complete
-	echo "\nUse \`cloud log <pod-name>\` to see logs"
-}
-
-cloud_import_images() {
-	begin Importing Images
-	image_paths=$(find "$cloud_images_path" -name \*.tar)
-	if [ ! -z $image_paths ]; then
-		while read image_path; do
-			name=$(basename $image_path | sed 's/\.tar//')
-			default_tag=docker.io/library/image
-			tag=docker.io/library/$name-$cloud_env
-			sha=$(vm_ssh sudo k3s crictl images | grep $tag | awk '{ print $3 }')
-			if [ ! -z $sha ]; then
-				vm_ssh sudo k3s crictl rmi $sha
-			fi
-			vm_ssh sudo sh <<-SSH
-				k3s ctr images import $image_path
-				k3s ctr images tag $default_tag:latest $tag:latest
-				k3s ctr images remove $default_tag:latest
-			SSH
-			rm $image_path
-		done <<< $image_paths
-	else
-		echo Already imported
-	fi
-}
-
-cloud_redeploy() {
-	cloud_undeploy nested
-	cloud_deploy
 }
 
 cloud_deploy() {
 	cloud_load
-	cloud_import_images
 	compile deploy
 	cloud_apply
 	complete
 }
 
-cloud_undeploy() {
-	cloud_load
-	begin Undeploying
-	cloud_kubectl delete --all deployments
-	if [ "$1" != nested ]; then
-		complete
-	fi
-}
-
 cloud_restart() {
 	cloud_load
-	name=$(cloud_find_pod $1)
-	cloud_kubectl delete pod $name
+	if [ -z $cloud_kubeconfig_path ]; then
+		cmd='delete pod '
+		if [ -z $1 ]; then
+			cmd+='-l type!=build'
+		else
+			cmd+=$(cloud_find_pod $1)
+		fi
+	else
+		cmd="rollout restart deployment $1"
+	fi
+	cloud_kubectl $cmd
 }
 
 cloud_shell() {
 	cloud_load
 	name=$(cloud_find_pod $1)
-	cloud_pod_exec $name /bin/bash
+	cloud_pod_exec $name /bin/sh
 }
 
 cloud_attach() {
@@ -956,7 +1043,7 @@ cloud_help() {
 			undeploy      Undeploys application
 			status [pod]  Prints status of pods (all by default)
 			restart [pod] Restart pod (rails by default)
-			shell [pod]   Opens bash shell in pod (rails by default)
+			shell [pod]   Opens a shell in pod (rails by default)
 			attach pod    Attachs into first process of pod (rails by default)
 			tunnel pod    Creates temporary tunnel into pod
 			exec [pod]    Executes shell command in pod (rails by default)
@@ -968,10 +1055,85 @@ cloud_help() {
 	DOC
 }
 
+# CONTEXTS
+
+contexts_list() {
+	cloud_set_paths
+	cloud_ensure_dir
+	list=$(ls -1 "$cloud_contexts_path")
+	if [ -z "$list" ]; then
+		error No contexts found
+	else
+		echo "$list"
+	fi
+}
+
+contexts_choose_provider() {
+	printf 'Choose provider: AWS (A)? '
+	read input
+	case $input in
+	A|a|'')
+		cloud_provider=aws
+	;;
+	*)
+		echo Invalid option, try again
+		contexts_choose_provider
+	esac
+	add_conf "$cloud_context_path" cloud_provider
+}
+
+contexts_add() {
+	agent_ensure
+	cloud_set_paths -c $1
+	cloud_ensure_dir
+	if ! cloud_context_exists; then
+		cloud_ensure_env
+		begin Adding Context $1
+		ensure_file "$cloud_context_path"
+		contexts_choose_provider
+		cloud_boot
+		case $cloud_provider in
+		aws)
+			aws_create_cloud
+		;;
+		esac
+	else
+		error Contexts already added
+	fi
+	complete
+}
+
+contexts_edit() {
+	cloud_set_paths -c $1
+	cloud_ensure_dir
+	cloud_ensure_context
+	begin Editing Context $1
+	edit "$cloud_context_path"
+	complete
+}
+
+contexts_delete() {
+	agent_ensure
+	cloud_set_paths -c $1
+	cloud_ensure_dir
+	cloud_ensure_context
+	cloud_ensure_env
+	cloud_boot
+	begin Deleting Context $1
+	case $cloud_provider in
+	aws)
+		aws_delete_cloud
+	;;
+	esac
+	rm -f "$cloud_context_path"
+	complete
+}
+
 # ENVS
 
 envs_list() {
 	cloud_set_paths
+	cloud_ensure_dir
 	list=$(ls -1 "$cloud_envs_path")
 	if [ -z "$list" ]; then
 		error No environments found
@@ -981,33 +1143,31 @@ envs_list() {
 }
 
 envs_add() {
-	cloud_set_paths
-	if ! cloud_env_exists $1; then
+	cloud_set_paths -e $1
+	cloud_ensure_dir
+	if ! cloud_env_exists; then
 		begin Adding Environment $1
-		mkdir -p "$cloud_envs_path"
-		touch "$cloud_env_path"
-		envs_edit_current
+		ensure_file "$cloud_env_path"
+		edit "$cloud_env_path"
 	else
-		error Environment $1 already added
+		error Environment already added
 	fi
 	complete
 }
 
-envs_edit_current() {
-	edit "$cloud_env_path"
-}
-
 envs_edit() {
-	cloud_set_paths
-	cloud_ensure_env $1
+	cloud_set_paths -e $1
+	cloud_ensure_dir
+	cloud_ensure_env
 	begin Editing Environment $1
-	envs_edit_current
+	edit "$cloud_env_path"
 	complete
 }
 
 envs_delete() {
-	cloud_set_paths
-	cloud_ensure_env $1
+	cloud_set_paths -e $1
+	cloud_ensure_dir
+	cloud_ensure_env
 	begin Deleting Environment $1
 	rm -f "$cloud_env_path"
 	complete
@@ -1029,6 +1189,11 @@ envs_help() {
 
 # VM
 
+vm_shell() {
+	agent_ensure
+	vm_ssh
+}
+
 vm_net_exists() {
 	if [ -f $user_conf_path ]; then
 		for name in ${net_setting_names[@]}; do
@@ -1040,10 +1205,6 @@ vm_net_exists() {
 	else
 		return 1
 	fi
-}
-
-agent_running() {
-	sudo launchctl list | grep $agent_name >/dev/null 2>&1
 }
 
 vm_ssh() {
@@ -1061,24 +1222,20 @@ vm_wait_ssh() {
 	begin Waiting SSH
 	while :; do
 		vm_ssh exit
-		printf .
-		if [ $? -eq 0 ]; then
+		if [ $? = 0 ]; then
 			echo
 			break
 		else
-			sleep 30
+			printf .
+			sleep $wait_count
 		fi
 	done
 }
 
 vm_kubectl() {
 	cmd=$@
-	if [ $context = remote ]; then
-		case $cloud_provider in
-		aws)
-			cmd="--kubeconfig $aws_kubeconfig_path $cmd"
-		;;
-		esac
+	if [ ! -z $cloud_kubeconfig_path ]; then
+		cmd="--kubeconfig $cloud_kubeconfig_path $cmd"
 	fi
 	vm_ssh sudo kubectl $cmd
 }
@@ -1110,13 +1267,13 @@ vm_first_boot() {
 		echo Waiting to receive ip
 		while :; do
 			printf .
-			start_agent
+			agent_start
 			mkdir -p $tmp_path
-			nc -l 1234 > $tmp_conf_path & sleep 30
+			nc -l 1234 > $tmp_conf_path & sleep $wait_count
 			kill $! 2>/dev/null
 			wait $! 2>/dev/null
 			if [ -z "$(cat $tmp_conf_path)" ]; then
-				stop_agent
+				agent_stop
 			else
 				break
 			fi
@@ -1338,7 +1495,7 @@ vm_config() {
 vm_start() {
 	begin Starting Virtual Machine
 	if ! agent_running; then
-		start_agent
+		agent_start
 		vm_wait_ssh
 	else
 		echo Already running
@@ -1351,7 +1508,7 @@ vm_start() {
 vm_stop() {
 	begin Stopping Virtual Machine
 	if agent_running; then
-		stop_agent
+		agent_stop
 	else
 		echo Not running
 	fi
@@ -1368,6 +1525,7 @@ vm_restart() {
 }
 
 vm_exec() {
+	agent_ensure
 	if [ $# -gt 1 ] && [ "$1" = -- ]; then
 		shift
 	else
@@ -1403,6 +1561,7 @@ vm_update_k3s() {
 }
 
 vm_update() {
+	agent_ensure
 	vm_update_packages
 	vm_update_k3s
 	complete
@@ -1419,7 +1578,7 @@ vm_help() {
 			start         Starts agent
 			stop          Stops agent
 			restart       Stops and starts agent
-			shell         Opens bash shell
+			shell         Opens a shell
 			exec          Executes command
 			update        Updates operating system
 			help          Prints documentation
@@ -1429,29 +1588,31 @@ vm_help() {
 # AWS
 
 aws() {
-	vm_ssh aws $@
+	vm_ssh aws $@ --profile $aws_profile || exit
+}
+
+aws_config() {
+	begin Configure AWS
+	if [ -z $aws_region ]; then
+		aws configure
+		aws_region=$(aws configure get region | tr -dc '[:print:]')
+		add_conf "$cloud_context_path" aws_region
+	else
+		echo Already configured
+	fi
 }
 
 aws_create_repository() {
-	if [ -z $rails_repo ]; then
-		rails_repo=$(
+	begin Creating Repository
+	if [ -z $repo_url ]; then
+		cloud_repo_url=$(
 			aws ecr create-repository \
 			--repository-name $cloud_name |
 			read_json repositoryUri
 		)
-		add_conf "$cloud_base_path" rails_repo
+		add_conf "$cloud_context_path" cloud_repo_url
 	else
 		echo Already created
-	fi
-}
-
-aws_delete_repository() {
-	begin Delete Repository
-	if [ ! -z $rails_repo ]; then
-		aws ecr delete-repository --repository-name $cloud_name
-		delete_conf "$cloud_base_path" rails_repo
-	else
-		echo Not found
 	fi
 }
 
@@ -1486,30 +1647,22 @@ aws_create_role() {
 			--assume-role-policy-document \'$aws_role_policy\' |
 			read_json Arn
 		)
-		add_conf "$cloud_remote_path" aws_role_arn
+		add_conf "$cloud_context_path" aws_role_arn
 		for name in \
 		AmazonEKSClusterPolicy \
 		AmazonEKSServicePolicy \
 		AmazonEKSWorkerNodePolicy \
 		AmazonEKS_CNI_Policy \
 		AmazonEC2ContainerRegistryReadOnly \
+		AmazonElasticFileSystemClientFullAccess \
 		AmazonRoute53FullAccess; do
 			aws iam attach-role-policy \
 			--role-name $cloud_name \
-			--policy-arn arn:aws:iam::aws:policy/$name
+			--policy-arn arn:aws:iam::aws:policy/$name \
+			>/dev/null
 		done
 	else
 		echo Already created
-	fi
-}
-
-aws_delete_role() {
-	begin Deleting Role
-	if [ ! -z $aws_role_arn ]; then
-		aws iam delete-role --role-name $cloud_name
-		delete_conf "$cloud_remote_path" aws_role_arn
-	else
-		echo Not found
 	fi
 }
 
@@ -1520,55 +1673,51 @@ aws_create_vpc() {
 			aws ec2 create-vpc --cidr-block 10.0.0.0/16 |
 			read_json VpcId 
 		)
-		add_conf "$cloud_remote_path" aws_vpc_id
+    echo Waiting to be available
+    wait_for aws_vpc_status available
+		add_conf "$cloud_context_path" aws_vpc_id
 		for name in support hostnames; do
 			aws ec2 modify-vpc-attribute \
 			--enable-dns-$name \
-			--vpc-id $aws_vpc_id
+			--vpc-id $aws_vpc_id \
+			>/dev/null
 		done
 		aws_route_table_id=$(
 			aws ec2 describe-route-tables \
 			--filters "Name=vpc-id,Values=$aws_vpc_id" |
 			read_json RouteTableId
 		)
-		add_conf "$cloud_remote_path" aws_route_table_id
+		add_conf "$cloud_context_path" aws_route_table_id
 	else
 		echo Already created
 	fi
 }
 
-aws_delete_vpc() {
-	begin Deleting VPC
-	if [ ! -z $aws_vpc_id ]; then
-		aws ec2 delete-vpc --vpc-id $aws_vpc_id
-		delete_conf "$cloud_remote_path" aws_vpc_id
-	else
-		echo Not found
-	fi
+aws_vpc_status() {
+  aws ec2 describe-vpcs \
+  --vpc-ids $aws_vpc_id |
+  read_json State
 }
 
 aws_create_gateway() {
-	aws_gateway_id=$(
-		aws ec2 create-internet-gateway |
-		read_json InternetGatewayId
-	)
-	add_conf "$cloud_remote_path" aws_gateway_id
-	aws ec2 attach-internet-gateway \
-	--vpc-id $aws_vpc_id \
-	--internet-gateway-id $aws_gateway_id
-	aws ec2 create-route \
-	--route-table-id $aws_route_table_id \
-	--gateway-id $aws_gateway_id \
-	--destination-cidr-block 0.0.0.0/0
-}
-
-aws_delete_gateway() {
-	begin Deleting Gateway
-	if [ ! -z $aws_gateway_id ]; then
-		aws ec2 delete-gateway --internet-gateway-id $aws_gateway_id
-		delete_conf "$cloud_remote_path" aws_gateway_id
+	begin Creating Gateway
+	if [ !-z $aws_gateway_id ]; then
+		aws_gateway_id=$(
+			aws ec2 create-internet-gateway |
+			read_json InternetGatewayId
+		)
+		aws ec2 attach-internet-gateway \
+		--vpc-id $aws_vpc_id \
+		--internet-gateway-id $aws_gateway_id \
+		>/dev/null
+		aws ec2 create-route \
+		--route-table-id $aws_route_table_id \
+		--gateway-id $aws_gateway_id \
+		--destination-cidr-block 0.0.0.0/0 \
+		>/dev/null
+		add_conf "$cloud_context_path" aws_gateway_id
 	else
-		echo Not found
+		echo Already created
 	fi
 }
 
@@ -1576,29 +1725,97 @@ aws_create_subnet() {
 	begin Creating Subnet$1
 	name=aws_subnet$1_id
 	block=10.0.$1.0
-	if []; then
-		aws_subnet2_id=$(
+	if [ -z ${!name} ]; then
+		id=$(
 			aws ec2 create-subnet \
-			--vpc-id ${!name} \
+			--vpc-id $aws_vpc_id \
 			--cidr-block $block/24 \
 			--availability-zone $2 |
 			read_json SubnetId
 		)
-		add_conf "$cloud_remote_path" $name
+		echo Waiting to be available
+		wait_for aws_subnet_status available
+		declare "$name=$id"
+		add_conf "$cloud_context_path" $name
 	else
 		echo Already created
 	fi
 }
 
-aws_delete_subnet() {
-	begin Deleting Subnet$1
-	name=aws_subnet$1_id
-	if [ -z ${!name} ]; then
-		aws ec2 delete-subnet --subnet-id ${!name}
-		delete_conf "$cloud_remote_path" $name
+aws_subnet_status() {
+	aws ec2 describe-subnets \
+	--subnet-ids $id |
+	read_json State
+}
+
+aws_create_efs_security_group() {
+	begin Creating EFS Security Group
+	if [ -z $aws_efs_security_group_id ]; then
+		name=$cloud_id-efs
+		aws_efs_security_group_id=$(
+			aws ec2 create-security-group \
+			 --vpc-id $aws_vpc_id \
+			--group-name $name \
+			--description $name |
+			read_json GroupId
+		)
+		aws ec2 authorize-security-group-ingress \
+		--group-id $aws_efs_security_group_id \
+		--protocol tcp \
+		--port 2049 \
+		--cidr 10.0.0.0/16
+		add_conf "$cloud_context_path" aws_efs_security_group_id
 	else
-		echo Not found
+		echo Already created	
 	fi
+}
+
+aws_create_file_system() {
+	begin Creating File System
+	if [ -z $aws_file_system_id ]; then
+		aws_file_system_id=$(
+			aws efs create-file-system |
+			read_json FileSystemId
+		)
+		echo Waiting to be available
+		wait_for aws_file_system_status available
+		add_conf "$cloud_context_path" aws_file_system_id
+	else
+		echo Already created
+	fi
+}
+
+aws_file_system_status() {
+	aws efs describe-file-systems \
+	--file-system-id $aws_file_system_id |
+	read_json LifeCycleState
+}
+
+aws_create_mount_target() {
+	begin Creating Mount Target$1
+	name=aws_mount_target$1_id
+	if [ -z ${!name} ]; then
+		subnet_name=aws_subnet$1_id
+		id=$(
+			aws efs create-mount-target \
+			--file-system-id $aws_file_system_id \
+			--subnet-id ${!subnet_name} \
+			--security-groups $aws_security_group_id |
+			read_json MountTargetId
+		)
+		echo Waiting to be available
+		wait_for aws_mount_target_status available
+		declare "$name=$id"
+		add_conf "$cloud_context_path" $name
+	else
+		echo Already created
+	fi
+}
+
+aws_mount_target_status() {
+	aws efs describe-mount-targets \
+	--mount-target-id $id |
+	read_json LifeCycleState
 }
 
 aws_create_cluster() {
@@ -1611,9 +1828,9 @@ aws_create_cluster() {
 		--resources-vpc-config \
 		subnetIds=$aws_subnet1_id,$aws_subnet2_id,endpointPrivateAccess=true,endpointPublicAccess=true \
 		>/dev/null
-		echo Waiting cluster to be active
+		echo Waiting to be active
 		wait_for aws_cluster_status ACTIVE
-		add_conf "$cloud_remote_path" aws_cluster_name
+		add_conf "$cloud_context_path" aws_cluster_name
 	else
 		echo Already created
 	fi
@@ -1621,26 +1838,8 @@ aws_create_cluster() {
 
 aws_cluster_status() {
 	aws eks describe-cluster \
-	--name $cloud_name |
+	--name $aws_cluster_name |
 	read_json status
-}
-
-aws_create_kubeconfig() {
-	begin Creating Kubeconfig
-	if [ -z $aws_kubeconfig_path ]; then
-		aws_kubeconfig_path=/home/hacker/.kube/$cloud_name
-		vm_ssh sudo sh <<-SSH
-			mkdir -p ~/.kube
-			rm -f $aws_kubeconfig_path
-			aws eks update-kubeconfig \
-			--name $cloud_name \
-			--kubeconfig $aws_kubeconfig_path \
-			>/dev/null
-		SSH
-		add_conf "$cloud_base_path" aws_kubeconfig_path
-	else
-		echo Already created
-	fi
 }
 
 aws_create_nodegroup() {
@@ -1648,14 +1847,14 @@ aws_create_nodegroup() {
 	if [ -z $aws_nodegroup_name ]; then
 		aws_nodegroup_name=default
 		aws eks create-nodegroup \
-		--cluster-name $cloud_name \
+		--cluster-name $aws_cluster_name \
 		--node-role $aws_role_arn \
 		--nodegroup-name $aws_nodegroup_name \
 		--subnets $aws_subnet1_id $aws_subnet2_id \
 		--scaling-config minSize=1,maxSize=1,desiredSize=1 \
 		>/dev/null
-		add_conf "$cloud_remote_path" aws_nodegroup_name
-		echo Waiting nodegroup to be active
+		add_conf "$cloud_context_path" aws_nodegroup_name
+		echo Waiting to be active
 		wait_for aws_nodegroup_status ACTIVE
 	else
 		echo Already created
@@ -1664,34 +1863,54 @@ aws_create_nodegroup() {
 
 aws_nodegroup_status() {
 	aws eks describe-nodegroup \
-	--cluster-name $cloud_name \
+	--cluster-name $aws_cluster_name \
 	--nodegroup-name $aws_nodegroup_name |
 	read_json status
 }
 
+aws_create_kubeconfig() {
+	begin Creating Kubeconfig
+	if ! $(vm_ssh test -f $cloud_kubeconfig_path); then
+		vm_ssh sudo sh <<-SSH
+			mkdir -p ~/.kube
+			rm -f $cloud_kubeconfig_path
+			aws eks update-kubeconfig \
+			--name $aws_cluster_name \
+			--kubeconfig $cloud_kubeconfig_path \
+			>/dev/null
+		SSH
+		add_conf "$cloud_context_path" cloud_kubeconfig_path
+	else
+		echo Already created
+	fi
+}
+
+aws_install_efs_csi() {
+	begin Installing EFS CSI
+	if [ -z $aws_efs_csi ]; then
+		vm_kubectl apply -k "github.com/kubernetes-sigs/aws-efs-csi-driver/deploy/kubernetes/overlays/stable/?ref=master"
+		add_conf "$cloud_context_path" aws_efs_csi true
+	else
+		echo Already installed
+	fi
+}
+
 aws_create_cloud() {
+	aws_config
 	aws_create_repository
 	aws_create_role
 	aws_create_vpc
 	aws_create_gateway
-	aws_create_subnet 1 us-east-2a
-	aws_create_subnet 2 us-east-2b
+	aws_create_subnet 1 ${aws_region}a
+	aws_create_subnet 2 ${aws_region}b
+	aws_create_efs_security_group
+	aws_create_file_system
+	aws_create_mount_target 1
+	aws_create_mount_target 2
 	aws_create_cluster
-	aws_create_kubeconfig
 	aws_create_nodegroup
-}
-
-aws_delete_cloud() {
-	aws_delete_nodegroup
-	aws_delete_kubeconfig
-	aws_delete_cluster
-	aws_delete_route_table
-	aws_delete_subnet 1
-	aws_delete_subnet 2
-	aws_delete_gateway
-	aws_delete_vpc
-	aws_delete_role
-	aws_delete_repository
+	aws_create_kubeconfig
+	complete
 }
 
 if [ -f $user_conf_path ]; then
@@ -1699,6 +1918,10 @@ if [ -f $user_conf_path ]; then
 fi
 
 case $1 in
+debug)
+	cloud_load
+	aws_create_cloud
+;;
 install)
 	cloud_install
 ;;
@@ -1722,39 +1945,11 @@ bin)
 	shift 
 	cloud_bin $@
 ;;
-envs)
-	case $2 in
-	''|list)
-		envs_list
-	;;
-	add)
-		envs_add $3
-	;;
-	edit)
-		envs_edit $3
-	;;
-	delete)
-		envs_delete $3
-	;;
-	help)
-		envs_help
-	;;
-	*)
-		envs_help $1
-	;;
-	esac
-;;
 build)
 	cloud_build
 ;;
 deploy)
 	cloud_deploy
-;;
-undeploy)
-	cloud_undeploy
-;;
-redeploy)
-	cloud_redeploy
 ;;
 restart)
 	cloud_restart $2
@@ -1778,6 +1973,50 @@ status)
 log)
 	cloud_log $2
 ;;
+envs)
+	case $2 in
+	''|list)
+		envs_list
+	;;
+	add)
+		envs_add $3
+	;;
+	edit)
+		envs_edit $3
+	;;
+	delete)
+		envs_delete $3
+	;;
+	help)
+		envs_help
+	;;
+	*)
+		envs_help $1
+	;;
+	esac
+;;
+contexts)
+	case $2 in
+	''|list)
+		contexts_list
+	;;
+	add)
+		contexts_add $3
+	;;
+	edit)
+		contexts_edit $3
+	;;
+	delete)
+		contexts_delete $3
+	;;
+	help)
+		contexts_help
+	;;
+	*)
+		contexts_help $1
+	;;
+	esac
+;;
 vm)
 	case $2 in
 	install)
@@ -1799,7 +2038,7 @@ vm)
 		vm_restart
 	;;
 	shell)
-		vm_ssh
+		vm_shell
 	;;
 	exec)
 		shift 2
