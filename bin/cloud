@@ -143,6 +143,11 @@ edit() {
 	fi
 }
 
+ensure_file() {
+	mkdir -p $(dirname $1)
+	touch $1
+}
+
 add_conf() {
 	if [ $2 = - ]; then
 		conf=$(cat -)
@@ -153,12 +158,11 @@ add_conf() {
 			conf="$2=$3"
 		fi
 	fi
-	mkdir -p $(dirname $1)
-	echo "$conf" >> $1
+	echo "$conf" | sudo tee -a $1 >/dev/null
 }
 
-del_conf() {
-	sed -i '' "/$2/d" $1 
+delete_conf() {
+	sudo sed -i '' "/$2/d" $1
 }
 
 bin_authorized() {
@@ -168,21 +172,20 @@ bin_authorized() {
 		client=$1
 	fi
 	result=$(
-		sudo sqlite3 \
-		"$tcc_path" "select 1 from access where allowed=true and service=\"kTCCServiceSystemPolicyAllFiles\" and client=\"$client\"" 2>/dev/null |
-		grep 1
+		sudo sqlite3 "$tcc_path" \
+		"select 0 from access where allowed=true and service=\"kTCCServiceSystemPolicyAllFiles\" and client=\"$client\"" 2>/dev/null
 	)
 	if [ $? = 1 ]; then
-		return 0
-	elif [ "$result" = 1]; then
 		return 1
-	else
+	elif [ "$result" = 0 ]; then
 		return 0
+	else
+		return 1
 	fi
 }
 
 show_file() {
-	osascript -e 'tell application "Finder"' -e activate -e "reveal POSIX file \"$1\"" -e end tell
+	osascript -e 'tell application "Finder"' -e activate -e "reveal POSIX file \"$1\"" -e end tell >/dev/null 2>&1
 }
 
 open_privacy() {
@@ -194,12 +197,12 @@ authorize_bin() {
 		open_privacy
 		name=$(basename $1)
 		echo \
-		Please drag the binary into the full disk access tab if $name don't appears, \
-		otherwise check the corresponding box
+		"Please drag the binary into the full disk access tab if $name don't appears," \
+		"otherwise check the corresponding box"
 		show_file $1
 		echo Press enter once done
 		read
-		if [ -z $(bin_authorized $@) ]; then
+		if bin_authorized $@; then
 			break
 		fi
 	done
@@ -211,6 +214,21 @@ host_exists() {
 
 export_exists() {
 	test -f $exports_path && sudo grep $exports_home_path $exports_path >/dev/null 2>&1
+}
+
+update_nfsd() {
+	sudo $nfsd_path update
+}
+
+start_agent() {
+	sudo launchctl load -w $user_agent_path >/dev/null
+}
+
+stop_agent() {
+	sudo launchctl unload -w $user_agent_path >/dev/null 2>&1
+	while agent_running; do
+		sleep 5
+	done
 }
 
 # COMPILE
@@ -490,7 +508,7 @@ cloud_choose_name() {
 	if [ -z $cloud_name ]; then
 		echo "Enter name: \c"
 		read	cloud_name
-		add_conf $cloud_base_path cloud_name
+		add_conf "$cloud_base_path" cloud_name
 	fi
 }
 
@@ -498,7 +516,7 @@ cloud_choose_port() {
 	if [ -z $rails_cluster_port ]; then
 		echo "Enter port: \c"
 		read	rails_cluster_port
-		add_conf $cloud_dev_path rails_cluster_port
+		add_conf "$cloud_dev_path" rails_cluster_port
 	fi
 }
 
@@ -511,7 +529,7 @@ cloud_choose_provider() {
 			cloud_provider=aws
 		;;
 		esac
-		add_conf $cloud_base_path cloud_provider
+		add_conf "$cloud_base_path" cloud_provider
 	fi
 }
 
@@ -586,7 +604,7 @@ cloud_clone() {
 
 cloud_authorize_terminal() {
 	begin Authorizing Terminal
-	if ! bin_authorized $terminal_path; then
+	if ! bin_authorized $terminal_path $terminal_client; then
 		authorize_bin $terminal_path $terminal_client
 		echo Restart terminal and run the script again
 		exit
@@ -599,7 +617,7 @@ cloud_authorize_nfsd() {
 	begin Authorizing NFSD
 	if ! bin_authorized $nfsd_path; then
 		authorize_bin $nfsd_path
-		sudo nfsd restart
+		update_nfsd
 	else
 		echo Already authorized
 	fi
@@ -666,7 +684,7 @@ cloud_uninstall() {
 }
 
 cloud_update() {
-	begin Updating Repository
+	begin Updating Script
 	current_path=$PWD
 	cd $repo_path
 	git pull
@@ -1024,7 +1042,7 @@ vm_net_exists() {
 	fi
 }
 
-vm_running() {
+agent_running() {
 	sudo launchctl list | grep $agent_name >/dev/null 2>&1
 }
 
@@ -1089,23 +1107,27 @@ vm_create_disk() {
 vm_first_boot() {
 	begin First Boot
 	if ! vm_net_exists; then
+		echo Waiting to receive ip
 		while :; do
-			echo Waiting to receive ip
-			vm_start nested
+			printf .
+			start_agent
 			mkdir -p $tmp_path
-			nc -l 1234 > $tmp_conf_path & sleep 30; kill $! >/dev/null 2>&1
+			nc -l 1234 > $tmp_conf_path & sleep 30
+			kill $! 2>/dev/null
+			wait $! 2>/dev/null
 			if [ -z "$(cat $tmp_conf_path)" ]; then
-				vm_stop
+				stop_agent
 			else
 				break
 			fi
 		done
 		. $tmp_conf_path
-		cat $tmp_conf_path >> $user_conf_path
+		cat $tmp_conf_path | add_conf $user_conf_path -
 		rm $tmp_conf_path
 	else
 		echo Already booted
 	fi
+	echo
 }
 
 vm_add_host() {
@@ -1121,7 +1143,7 @@ vm_share_home() {
 	begin Sharing Home Directory
 	if ! export_exists; then
 		echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
-		sudo nfsd update
+		update_nfsd
 		vm_ssh sudo sh <<-SSH
 			echo "$mac_ip:$exports_home_path\t$HOME\tnfs local_lock=all\t0 0" >> /etc/fstab
 			mkdir -p $HOME
@@ -1136,6 +1158,7 @@ vm_init() {
 	begin Initializing Virtual Machine
 	if [ -z $vm_id ]; then
 		vm_id=$(gen_id)
+		ensure_file $user_conf_path
 		add_conf $user_conf_path vm_id
 		vm_config nested
 	else
@@ -1164,19 +1187,33 @@ vm_delete_agent() {
 	fi
 }
 
-vm_delete_net() {
-	begin Deleting Network Settings
-	if vm_net_exists; then
-		for name in ${net_setting_names[@]}; do
-			sudo sed -i '' "/$name/d" $user_conf_path
-		done
+vm_id_exists() {
+	cat $user_conf_path | grep vm_id >/dev/null 2>&1
+}
+
+vm_delete_settings() {
+	begin Deleting Settings
+	if [ -f $user_conf_path ]; then
+		if vm_id_exists; then
+			delete_conf $user_conf_path vm_id
+			found=true
+		fi
+		if vm_net_exists; then
+			for name in ${net_setting_names[@]}; do
+				delete_conf $user_conf_path $name
+			done
+			found=true
+		fi
+		if [ "$found" != true ]; then
+			echo Not found
+		fi
 	else
 		echo Not found
 	fi
 }
 
 vm_delete_files() {
-	begin Deleting Virtual Machine
+	begin Deleting Files
 	if [ -d $repo_vm_path ]; then
 		rm -rf $repo_vm_path
 		rm -rf $user_disk_path
@@ -1188,18 +1225,18 @@ vm_delete_files() {
 vm_delete_hostname() {
 	begin Deleting Hostname
 	if host_exists; then
-		sudo sed -i '' "/$vm_name/d" $hosts_path
+		delete_conf $hosts_path $vm_name
 	else
 		echo Not found
 	fi
 }
 
 vm_unshare_home() {
-	begin Unsharing Home Directroy
+	begin Unsharing Home Directory
 	if export_exists; then
 		escaped_exports_home_path=$(echo $exports_home_path | sed 's/\//\\\//g')
-		sudo sed -i '' "/$escaped_exports_home_path/d" $exports_path
-		sudo nfsd update
+		delete_conf $exports_path $escaped_exports_home_path
+		update_nfsd
 	else
 		echo Not shared
 	fi
@@ -1209,7 +1246,7 @@ vm_uninstall() {
 	vm_stop nested
 	vm_delete_agent
 	if [ "$1" != nested ]; then
-		vm_delete_net
+		vm_delete_settings
 		vm_delete_files
 	fi
 	vm_delete_hostname
@@ -1220,7 +1257,9 @@ vm_uninstall() {
 }
 
 vm_choose_settings() {
-	begin Choosing Settings
+	if [ "$1" != nested ]; then
+		begin Choosing Settings
+	fi
 	indexes=${!user_setting_names[@]}
 	for i in $indexes; do
 		desc=${user_setting_descs[$i]}
@@ -1244,10 +1283,10 @@ vm_choose_settings() {
 		for i in $indexes; do
 			name=${user_setting_names[$i]}
 			value=${!user_setting_names[$i]}
-			sudo sed -i '' "/$name/d" $user_conf_path
-			echo $name=$value >> $user_conf_path
+			delete_conf $user_conf_path $name
+			add_conf $user_conf_path $name $value
 		done
-		configure
+		vm_choose_settings nested
 	fi
 }
 
@@ -1298,9 +1337,9 @@ vm_config() {
 
 vm_start() {
 	begin Starting Virtual Machine
-	if ! vm_running; then
-		sudo launchctl load -w $user_agent_path >/dev/null
-		vm_wait_ssh		
+	if ! agent_running; then
+		start_agent
+		vm_wait_ssh
 	else
 		echo Already running
 	fi
@@ -1311,11 +1350,8 @@ vm_start() {
 
 vm_stop() {
 	begin Stopping Virtual Machine
-	if vm_running; then
-		sudo launchctl unload -w $user_agent_path >/dev/null 2>&1
-		while vm_running; do
-			sleep 5
-		done
+	if agent_running; then
+		stop_agent
 	else
 		echo Not running
 	fi
@@ -1325,6 +1361,7 @@ vm_stop() {
 }
 
 vm_restart() {
+	begin Restarting Virtual Machine
 	vm_stop nested
 	vm_start nested
 	complete
@@ -1412,7 +1449,7 @@ aws_delete_repository() {
 	begin Delete Repository
 	if [ ! -z $rails_repo ]; then
 		aws ecr delete-repository --repository-name $cloud_name
-		del_conf "$cloud_base_path" rails_repo
+		delete_conf "$cloud_base_path" rails_repo
 	else
 		echo Not found
 	fi
@@ -1470,7 +1507,7 @@ aws_delete_role() {
 	begin Deleting Role
 	if [ ! -z $aws_role_arn ]; then
 		aws iam delete-role --role-name $cloud_name
-		del_conf "$cloud_remote_path" aws_role_arn
+		delete_conf "$cloud_remote_path" aws_role_arn
 	else
 		echo Not found
 	fi
@@ -1504,7 +1541,7 @@ aws_delete_vpc() {
 	begin Deleting VPC
 	if [ ! -z $aws_vpc_id ]; then
 		aws ec2 delete-vpc --vpc-id $aws_vpc_id
-		del_conf "$cloud_remote_path" aws_vpc_id
+		delete_conf "$cloud_remote_path" aws_vpc_id
 	else
 		echo Not found
 	fi
@@ -1529,7 +1566,7 @@ aws_delete_gateway() {
 	begin Deleting Gateway
 	if [ ! -z $aws_gateway_id ]; then
 		aws ec2 delete-gateway --internet-gateway-id $aws_gateway_id
-		del_conf "$cloud_remote_path" aws_gateway_id
+		delete_conf "$cloud_remote_path" aws_gateway_id
 	else
 		echo Not found
 	fi
@@ -1558,7 +1595,7 @@ aws_delete_subnet() {
 	name=aws_subnet$1_id
 	if [ -z ${!name} ]; then
 		aws ec2 delete-subnet --subnet-id ${!name}
-		del_conf "$cloud_remote_path" $name
+		delete_conf "$cloud_remote_path" $name
 	else
 		echo Not found
 	fi
