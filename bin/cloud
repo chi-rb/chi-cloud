@@ -7,7 +7,8 @@ hosts_path=/etc/hosts
 bin_path=/usr/local/bin
 nfsd_path=/sbin/nfsd
 tcc_path=/Library/Application\ Support/com.apple.TCC/TCC.db
-terminal_path=com.apple.Terminal
+terminal_path=/System/Applications/Utilities/Terminal.app
+terminal_client=com.apple.Terminal
 rails_pod=rails
 
 agent_name=com.cloud
@@ -161,9 +162,23 @@ del_conf() {
 }
 
 bin_authorized() {
-	sudo sqlite3 \
-	"$tcc_path" "select 1 from access where service=\"kTCCServiceSystemPolicyAllFiles\" and client=\"$1\"" |
-	grep 1 >/dev/null 2>&1 
+	if [ ! -z $2 ]; then
+		client=$2
+	else
+		client=$1
+	fi
+	result=$(
+		sudo sqlite3 \
+		"$tcc_path" "select 1 from access where allowed=true and service=\"kTCCServiceSystemPolicyAllFiles\" and client=\"$client\"" 2>/dev/null |
+		grep 1
+	)
+	if [ $? = 1 ]; then
+		return 0
+	elif [ "$result" = 1]
+		return 1
+	else
+		return 0
+	fi
 }
 
 show_file() {
@@ -175,12 +190,18 @@ open_privacy() {
 }
 
 authorize_bin() {
-	while [ -z $(bin_authorized $1) ]; do
+	while :; do
 		open_privacy
-		echo Please drag the binary into the full disk access tab
+		name=$(basename $1)
+		echo \
+		Please drag the binary into the full disk access tab if $name don't appears, \
+		otherwise check the corresponding box
 		show_file $1
 		echo Press enter once done
 		read
+		if [ -z $(bin_authorized $@) ]; then
+			break
+		fi
 	done
 }
 
@@ -566,7 +587,7 @@ cloud_clone() {
 cloud_authorize_terminal() {
 	begin Authorizing Terminal
 	if ! bin_authorized $terminal_path; then
-		authorize_bin $terminal_path
+		authorize_bin $terminal_path $terminal_client
 		echo Restart terminal and run the script again
 		exit
 	else
