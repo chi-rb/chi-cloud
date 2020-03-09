@@ -174,7 +174,7 @@ bin_authorized() {
 	)
 	if [ $? = 1 ]; then
 		return 0
-	elif [ "$result" = 1]
+	elif [ "$result" = 1]; then
 		return 1
 	else
 		return 0
