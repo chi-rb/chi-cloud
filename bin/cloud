@@ -282,7 +282,7 @@ compile_tpl() {
 			render_path=${sub_args[1]}
 			vars=("${sub_args[@]:2}")
 			for var in $vars; do
-				declare $var
+				export $var
 			done
 			snippet_path=$cloud_snippets_path/$render_path.yml
 			sub_value=$(compile_tpl "$snippet_path" $2 $3 | sed 's/\//\\\//g' | tr '\n' '\r')
@@ -324,14 +324,14 @@ compile_tpls() {
 		names+=($name)
 		pod_name=$(echo $name | tr _ -)
 		pod_names+=($pod_name)
-		declare "${name}_host=$pod_name"
-		declare "${name}_name=$pod_name"
+		export "${name}_host=$pod_name"
+		export "${name}_name=$pod_name"
 		if [ -f "$cloud_build_path/$name/Dockerfile" ]; then
 			image=$name-$cloud_env
 			if [ $cloud_context != local ]; then
-				declare "${name}_image=$cloud_repo_url:$image"
+				export "${name}_image=$cloud_repo_url:$image"
 			else
-				declare "${name}_image=cloud:32000/$image"
+				export "${name}_image=cloud:32000/$image"
 			fi
 		fi
 	done
@@ -1735,7 +1735,7 @@ aws_create_subnet() {
 		)
 		echo Waiting to be available
 		wait_for aws_subnet_status available
-		declare "$name=$id"
+		export "$name=$id"
 		add_conf "$cloud_context_path" $name
 	else
 		echo Already created
@@ -1805,7 +1805,7 @@ aws_create_mount_target() {
 		)
 		echo Waiting to be available
 		wait_for aws_mount_target_status available
-		declare "$name=$id"
+		export "$name=$id"
 		add_conf "$cloud_context_path" $name
 	else
 		echo Already created
@@ -1918,10 +1918,6 @@ if [ -f $user_conf_path ]; then
 fi
 
 case $1 in
-debug)
-	cloud_load
-	aws_create_cloud
-;;
 install)
 	cloud_install
 ;;
