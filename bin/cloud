@@ -1800,7 +1800,7 @@ aws_create_mount_target() {
 			aws efs create-mount-target \
 			--file-system-id $aws_file_system_id \
 			--subnet-id ${!subnet_name} \
-			--security-groups $aws_security_group_id |
+			--security-groups $aws_efs_security_group_id |
 			read_json MountTargetId
 		)
 		echo Waiting to be available
