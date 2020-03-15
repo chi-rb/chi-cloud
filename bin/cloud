@@ -1906,7 +1906,6 @@ aws_create_cloud() {
 	aws_create_nodegroup
 	aws_create_kubeconfig
 	aws_install_efs_csi
-	complete
 }
 
 if [ -f $user_conf_path ]; then
