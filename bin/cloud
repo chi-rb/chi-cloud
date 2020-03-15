@@ -1588,7 +1588,7 @@ vm_help() {
 # AWS
 
 aws() {
-	vm_ssh aws $@ --profile $aws_profile || exit
+	vm_ssh AWS_PAGER= aws $@ --profile $aws_profile || exit
 }
 
 aws_config() {
