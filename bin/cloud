@@ -430,7 +430,7 @@ compile_statics() {
 
 compile() {
 	begin Compiling YAMLs
-	find "$cloud_tmp_path" ! -name 'images' -maxdepth 1 -mindepth 1 -exec rm -rf {} +
+	rm -rf "$cloud_tmp_path"
 	mkdir -p "$cloud_compile_path"
 	paths=$(find "$cloud_deploy_path/base" "$cloud_deploy_path/$cloud_env" -name \*.yml)
 	case $1 in
@@ -439,7 +439,6 @@ compile() {
 			name=$(basename "$path" | sed 's/\.yml//')
 			if [ -d "$cloud_build_path/$name" ]; then
 				target_path="$cloud_compile_path/$name.yml"
-				mkdir -p "$cloud_images_path"
 				if [ $cloud_context = local ]; then
 					cat <<-YML > "$target_path"
 						apiVersion: v1
@@ -496,6 +495,9 @@ compile() {
 							      mountPath: /kaniko/.docker/
 							    - name: aws
 							      mountPath: /root/.aws/
+							    env:
+							    - name: AWS_PROFILE
+							      value: {{ aws_profile }}
 							  volumes:
 							  - name: mnt
 							    hostPath:
@@ -667,7 +669,6 @@ cloud_set_paths() {
 	cloud_prod_path=$cloud_envs_path/production
 	cloud_env_path=$cloud_envs_path/$cloud_env
 	cloud_tmp_path=$app_path/tmp/cloud
-	cloud_images_path=$cloud_tmp_path/images
 	cloud_compile_path=$cloud_tmp_path/compile
 	cloud_apply_path=$cloud_tmp_path/apply
 	cloud_docker_path=$cloud_apply_path/docker.yml
