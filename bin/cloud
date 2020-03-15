@@ -1907,6 +1907,7 @@ aws_create_cloud() {
 	aws_create_cluster
 	aws_create_nodegroup
 	aws_create_kubeconfig
+	aws_install_efs_csi
 	complete
 }
 
@@ -1915,6 +1916,10 @@ if [ -f $user_conf_path ]; then
 fi
 
 case $1 in
+debug)
+	cloud_load
+	aws_install_efs_csi
+;;
 install)
 	cloud_install
 ;;
