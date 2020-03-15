@@ -354,7 +354,7 @@ compile_statics() {
 					apiVersion: v1
 					kind: PersistentVolume
 					metadata:
-					  name: efs-pv
+					  name: $cloud_id
 					spec:
 					  capacity:
 					    storage: 1Gi
@@ -564,7 +564,7 @@ cloud_boot() {
 		case $cloud_provider in
 		aws)
 			cloud_storage_class=efs-sc
-			cloud_kubeconfig_path=$vm_home_path/.kube/aws-$cloud_id
+			cloud_kubeconfig_path=$vm_home_path/.kube/$cloud_id-$cloud_context
 			aws_credentials_path=$vm_home_path/.aws/credentials
 			aws_profile=$cloud_name-$cloud_context
 		;;
@@ -1913,10 +1913,6 @@ if [ -f $user_conf_path ]; then
 fi
 
 case $1 in
-debug)
-	cloud_load
-	aws_install_efs_csi
-;;
 install)
 	cloud_install
 ;;
