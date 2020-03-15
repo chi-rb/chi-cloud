@@ -1097,11 +1097,19 @@ contexts_add() {
 }
 
 contexts_edit() {
+	agent_ensure
 	cloud_set_paths -c $1
 	cloud_ensure_dir
 	cloud_ensure_context
+	cloud_ensure_env
+	cloud_boot
 	begin Editing Context $1
 	edit "$cloud_context_path"
+	case $cloud_provider in
+	aws)
+		aws_create_cloud
+	;;
+	esac
 	complete
 }
 
@@ -1597,7 +1605,7 @@ aws_config() {
 
 aws_create_repository() {
 	begin Creating Repository
-	if [ -z $repo_url ]; then
+	if [ -z $cloud_repo_url ]; then
 		cloud_repo_url=$(
 			aws ecr create-repository \
 			--repository-name $cloud_name |
@@ -1693,7 +1701,7 @@ aws_vpc_status() {
 
 aws_create_gateway() {
 	begin Creating Gateway
-	if [ !-z $aws_gateway_id ]; then
+	if [ -z $aws_gateway_id ]; then
 		aws_gateway_id=$(
 			aws ec2 create-internet-gateway |
 			read_json InternetGatewayId
