@@ -665,7 +665,6 @@ cloud_set_paths() {
 	cloud_compile_path=$cloud_tmp_path/compile
 	cloud_apply_path=$cloud_tmp_path/apply
 	cloud_docker_path=$cloud_apply_path/docker.yml
-	cloud_storage_class_path=$cloud_apply_path/storage_class.yml
 	cloud_volume_path=$cloud_apply_path/volume.yml
 	cloud_claim_path=$cloud_apply_path/claim.yml
 	cloud_aws_path=$cloud_apply_path/aws.yml
