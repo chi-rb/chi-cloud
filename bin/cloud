@@ -350,13 +350,6 @@ compile_statics() {
 		case $cloud_provider in
 		aws)
 			if [ ! -z $cloud_kubeconfig_path ]; then
-				cat <<-YML > "$cloud_storage_class_path"
-					kind: StorageClass
-					apiVersion: storage.k8s.io/v1
-					metadata:
-					  name: efs-sc
-					provisioner: efs.csi.aws.com
-				YML
 				cat <<-YML > "$cloud_volume_path"
 					apiVersion: v1
 					kind: PersistentVolume
@@ -1885,6 +1878,13 @@ aws_install_efs_csi() {
 	begin Installing EFS CSI
 	if [ -z $aws_efs_csi ]; then
 		vm_kubectl apply -k "github.com/kubernetes-sigs/aws-efs-csi-driver/deploy/kubernetes/overlays/stable/?ref=master"
+		cat <<-YML | vm_kubectl apply -f -
+			kind: StorageClass
+			apiVersion: storage.k8s.io/v1
+			metadata:
+			  name: efs-sc
+			provisioner: efs.csi.aws.com
+		YML
 		add_conf "$cloud_context_path" aws_efs_csi true
 	else
 		echo Already installed
