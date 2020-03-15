@@ -1655,7 +1655,6 @@ aws_create_role() {
 		AmazonEKSWorkerNodePolicy \
 		AmazonEKS_CNI_Policy \
 		AmazonEC2ContainerRegistryReadOnly \
-		AmazonElasticFileSystemClientFullAccess \
 		AmazonRoute53FullAccess; do
 			aws iam attach-role-policy \
 			--role-name $cloud_name \
