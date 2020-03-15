@@ -1871,14 +1871,10 @@ aws_nodegroup_status() {
 aws_create_kubeconfig() {
 	begin Creating Kubeconfig
 	if ! $(vm_ssh test -f $cloud_kubeconfig_path); then
-		vm_ssh sudo sh <<-SSH
-			mkdir -p ~/.kube
-			rm -f $cloud_kubeconfig_path
-			aws eks update-kubeconfig \
-			--name $aws_cluster_name \
-			--kubeconfig $cloud_kubeconfig_path \
-			>/dev/null
-		SSH
+		aws eks update-kubeconfig \
+		--name $aws_cluster_name \
+		--kubeconfig $cloud_kubeconfig_path \
+		>/dev/null
 		add_conf "$cloud_context_path" cloud_kubeconfig_path
 	else
 		echo Already created
