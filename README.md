@@ -8,15 +8,17 @@ I want to provide a standarized way to manage infrastructure, to enable developm
 
 ## How using this tool looks like?
 
-The main goal is to keep you development flow the same, so a lot has been done to try to avoid overhead and keep every command as simple and intuitive a possible if is needed.
+The main goal is to keep you development flow the same, so a lot has been done to try to avoid overhead and keep every command as simple and intuitive a possible.
 
-Macro speaking, a usual development flow once everything is setup, would go like this:
+Macro speaking, a usual development flow once everything is setup, might go like this:
 
-### 1. Start making the required changes on the files
+### 1. Start the daiy making the required changes on the files
 
 Maybe pulling from git the latest changes and using your favorite editor edit the project.
 
-### 2. Ocassionally using Rails/Ruby commands
+Nothing changes here.
+
+### 2. Ocassionally use Rails/Ruby commands
 
 The script maps all Rails/Ruby commands into the vm seamless, so all the commands you already know will be the same:
 
@@ -28,28 +30,21 @@ bin/rails test
 
 Since Rails is dockerized and bind to the root folder, all changes all picked automatically and the local Rails server is ensured to be up. So there is no need to do constants restarts or transfer files.
 
-You might want to sneak into the local server from time to time:
+At some point you may want to sneak into the local server logs:
 ```
 cloud log rails
 ```
 
-Or bump the version of any:
-```
-cloud envs edit development # bump version of the corresping image target
-cloud build
-cloud deploy
-```
-
 ### 3. Deploy changes into the production server
 
-This might go like this:
+This will go something like this:
 
-Build docker images:
+#### a) Build docker images:
 ```
 CLOUD=remote cloud build
 ```
 
-Send the new deployment:
+#### b) Send the new deployment:
 ```
 CLOUD=remote cloud deploy
 ```
@@ -60,7 +55,7 @@ Or manually restart a specific pod:
 CLOUD=remote cloud restart rails
 ```
 
-Ensure everything is in good shape:
+#### c) Ensure everything is in good shape:
 ```
 CLOUD=remote cloud status
 ```
