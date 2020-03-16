@@ -14,7 +14,7 @@ Macro speaking, a usual development flow once everything is setup, might look li
 
 ### 1. Start the day making the required changes on some files
 
-Possibly pulling from git the latest changes and using your favorite editor to edit the project.
+Possibly pulling from git the latest changes and using your favorite editor to update some files.
 
 Nothing fancy here.
 
@@ -30,7 +30,7 @@ bin/rails test
 
 Since Rails is dockerized and binded to the root folder, all changes all picked automatically and the local Rails server is ensured to be up. So there is no need to do constants restarts or transfer files.
 
-One way that the flow will change, is in how to check logs. Because everything is dockerized, at some point you may want to sneak into the pod using:
+One way that the flow will change, is in how to check logs. Because pods output into stdout, you need a way to sneak into that output:
 ```
 cloud log rails
 ```
@@ -44,14 +44,7 @@ This will look something like this:
 CLOUD=remote cloud build
 ```
 
-#### b) Send the new deployment:
-
-By applying the configuration yamls:
-```
-CLOUD=remote cloud deploy
-```
-
-Or manually restart the required pod:
+#### b) Trigger a rolling update to make Rails pod fetch the new image:
 ```
 CLOUD=remote cloud restart rails
 ```
