@@ -8,15 +8,15 @@ I want to provide a standarized way to manage infrastructure, to enable developm
 
 ## How using this tool looks like?
 
-The main goal is to keep you development flow the same, so a lot has been done to try to avoid overhead and keep every command as simple and intuitive a possible.
+The main goal is to keep you development flow the same, so a lot has been done to try to avoid overhead and keep every command as simple and intuitive as possible.
 
-Macro speaking, a usual development flow once everything is setup, might go like this:
+Macro speaking, a usual development flow once everything is setup, might look like this:
 
-### 1. Start the daiy making the required changes on the files
+### 1. Start the day making the required changes on some files
 
-Maybe pulling from git the latest changes and using your favorite editor edit the project.
+Possibly pulling from git the latest changes and using your favorite editor to edit the project.
 
-Nothing changes here.
+Nothing fancy here.
 
 ### 2. Ocassionally use Rails/Ruby commands
 
@@ -37,20 +37,20 @@ cloud log rails
 
 ### 3. Deploy changes into the production server
 
-This will go something like this:
+This will look something like this:
 
 #### a) Build docker images:
 ```
 CLOUD=remote cloud build
 ```
 
-#### b) Send the new deployment:
+#### b1) Send the new deployment:
 ```
 CLOUD=remote cloud deploy
 ```
 This will trigger a rolling update for each modified pod.
 
-Or manually restart a specific pod:
+#### b2) Or manually restart a specific pod:
 ```
 CLOUD=remote cloud restart rails
 ```
