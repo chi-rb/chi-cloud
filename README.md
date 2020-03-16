@@ -4,10 +4,7 @@ Provides a simple orchestration of a Ruby on Rails deployment within a localised
 
 ## Why?
 
-I wanted to create a standarized way to manage infrastructure, to enable development teams to work on a consistent platform, whilst lowering the entry bar to running Kubernetes locally.
-
-## What
-TODO
+I want to provide a standarized way to manage infrastructure, to enable development teams to work on a consistent platform, whilst lowering the entry bar to run Kubernetes.
 
 ## How to install?
 
@@ -17,16 +14,9 @@ sh <(curl -s https://raw.githubusercontent.com/chi-rb/chi-cloud/master/bin/cloud
 ```
 This will commence the cloud install script and prompt for some initial configuration.
 
-Configuration of the base hypervisor VM can be adjusted, depending on host machine specifications.
-```
-~> Choosing Configuration
-Virtual machine memory: 4G
-Virtual machine cpus: 4
-```
-
 The host administration password will be requested to complete the installation.
 
-You will also be asked for your hub.docker.com account credentials for storing the cloud docker images.
+Once is done you're going to be asked to prefix the $PATH on your shell profile. This will map any rails commands to the cloud instance inside the root directory, whilst leaving any additional Ruby management tools (rbenv, RVM etc) intact for other projects.
 
 ## How to uninstall?
 
@@ -34,7 +24,7 @@ To completely uninstall cloud and the associated VM:
 ```
 cloud uninstall
 ```
-THIS IS DESTRUCTIVE - YOU HAVE BEEN WARNED
+THIS IS DESTRUCTIVE - YOU HAVE BEEN WARNED 
 
 ## How to update?
 
@@ -43,7 +33,7 @@ To update to the latest commit on the master branch:
 cloud update
 ```
 
-Or to a specific tag:
+If you want a specific version use the corresponding tag:
 ```
 cloud update v1.4.0
 ```
@@ -53,7 +43,6 @@ cloud update v1.4.0
 ### How to initialize a cloud?
 
 Cloud can be used to generate a new Rails app by running:
-
 ```
 cloud init path_to/awesome/new_app
 ```
@@ -63,9 +52,7 @@ A Cloud deployment can be added to an existing Rails app by navigating to the ro
 ```
 cloud init
 ```
-This will leave the existing application intact with the addition of a `cloud` directory, that will contain the required configuration.
-
-NB: If using macOS Catalina see `Known Issues` below.
+This will leave the existing application intact with the addition of a `cloud` directory, that will contain the required configuration plus tmp folder with samples of some suggested tweaks.
 
 ## How to manage a cloud?
 
@@ -73,7 +60,7 @@ All the following commands are designed to be executed from the root path of an 
 
 ### Destroy
 
-Removes cloud folder and destroys cloud:
+Removes cloud folder and destroys cloud locally:
 ```
 cloud destroy
 ```
@@ -92,13 +79,6 @@ Deploys app into the cloud:
 cloud deploy
 ```
 
-### Undeploy
-
-Occasionally it is useful to delete all deployed pods to recover from an error, this can be achieved with:
-```
-cloud undeploy
-```
-
 ### Status
 
 Prints status of all pods:
@@ -106,19 +86,19 @@ Prints status of all pods:
 cloud status
 ```
 
-Or a verbose description of a specific pod:
+Or a verbose description of a specific one:
 ```
 cloud status rails
 ```
 
 ### Restart
 
-Restarts rails pod:
+Restarts all pods:
 ```
 cloud restart
 ```
 
-Or any other:
+Or a specific one:
 ```
 cloud restart chrome
 ```
@@ -130,7 +110,7 @@ Opens bash shell in the Rails pod:
 cloud shell
 ```
 
-Or any other:
+Or any other one:
 ```
 cloud shell hub
 ```
@@ -142,19 +122,18 @@ Attaches into the first process of Rails pod:
 cloud attach
 ```
 
-Or any other:
+Or any other one:
 ```
 cloud attach chrome
 ```
 
 ### Tunnel
 
-Creates temporary tunnel into pod:
+Creates temporary tunnel into a pod:
 ```
 cloud tunnel mysql
 ```
-
-NOTE: To connect you need to ssh into hacker@cloud.
+You would need to ssh into hacker@cloud previously to stablish the connection.
 
 ### Exec
 
@@ -163,7 +142,7 @@ Executes command in Rails pod:
 cloud exec -- bundle update
 ```
 
-Or any other:
+Or any other one:
 ```
 cloud exec mysql -- mysqldump
 ```
@@ -182,16 +161,94 @@ Tails log of Rails pod:
 cloud log
 ```
 
-Or any other:
+Or any other one:
 ```
 cloud log redis
 ```
 
-## How to run Rails commands
+## How to manage contexts?
 
-Add the following to your shell profile. This will map any rails commands to the cloud instance inside the root directory, whilst leaving any additional Ruby management tools (rbenv, RVM etc) intact for other projects.
+Contexts are the cloud locations, you will have a default local one running using a xhyve vm for local development, and you can add as many remote one as you like to connect to remote providers like AWS. 
+
+Each context file saves all the settings needed by that context in the form of simple shell variables.
+
+### List
+
+Lists all the available contexts:
 ```
-export PATH=/usr/local/cloud/bin:$PATH
+cloud contexts list
+```
+
+If you avoid the `list` part, will work yoo:
+```
+cloud contexts
+```
+
+### Add
+
+Adds a new context:
+```
+cloud contexts add remote
+```
+This wil connect with the providers api to setup the remote context in order to be ready to accept deployments.
+
+### Edit
+
+Edits the specified context:
+```
+cloud contexts edit remote
+```
+Will first open the file to edit using $EDIT and then re-run the setup avoiding any stage that is already configured. 
+
+You can use to complete a premature ended add previous procedure, or by removing one setting, you can execute the respective remote setup block again.
+
+### Delete
+
+Deletes specified context:
+```
+cloud contexts delete remote
+```
+Right now we are not able to connects into remote providers to wipe all the remote resources, but we're working towards making this possible in the future.
+
+## How to manage environments?
+
+Environments are closely tight to `RAILS_ENV`, you should have one per each Rails environment to be able to switch between them. 
+
+Each context file saves all the settings needed by that environment in the form of simple shell variables.
+
+### List
+
+Lists all the available environments:
+```
+cloud envs list
+```
+
+If you avoid the `list` part, will work yoo:
+```
+cloud envs
+```
+
+### Add
+
+Adds a new environment:
+```
+cloud envis add production
+```
+Will create new file and open it to edit using $EDITOR. 
+
+### Edit
+
+Edits the specified environment:
+```
+cloud envs edit production
+```
+Will open the configuration file to edit it using $EDITOR. 
+
+### Delete
+
+Deletes specified environment:
+```
+cloud envs delete production
 ```
 
 ## How to manage the vm?
@@ -246,12 +303,6 @@ Print documentation using:
 ```
 cloud help
 ```
-
-## Known issues
-
-### macOS Catalina
-
-New security measures have been added into Catalina, so you need to manually add `/sbin/nfsd` and `/usr/local/cloud/mac/xhyve` into `System Preferences > Security & Privacy > Privacy > Full Disk Access`.
 
 ## Credits
 
