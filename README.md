@@ -30,7 +30,7 @@ bin/rails test
 
 Since Rails is dockerized and bind to the root folder, all changes all picked automatically and the local Rails server is ensured to be up. So there is no need to do constants restarts or transfer files.
 
-At some point you may want to sneak into the local server logs:
+One way that the flow will change, is to check logs. Beacuse everything is dockerdize, at  some point you may want to sneak into the local server logs using:
 ```
 cloud log rails
 ```
@@ -44,13 +44,14 @@ This will look something like this:
 CLOUD=remote cloud build
 ```
 
-#### b1) Send the new deployment:
+#### b) Send the new deployment:
+
+By applying the configuration yamls:
 ```
 CLOUD=remote cloud deploy
 ```
-This will trigger a rolling update for each modified pod.
 
-#### b2) Or manually restart a specific pod:
+Or manually restart the required pod:
 ```
 CLOUD=remote cloud restart rails
 ```
