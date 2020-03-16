@@ -38,25 +38,25 @@ If you want a specific version use the corresponding tag:
 cloud update v1.4.0
 ```
 
-## Getting Started
+## How to manage a cloud?
 
-### How to initialize a cloud?
+Clouds are the combination of a Rails app and all his required infrastructure.
 
-Cloud can be used to generate a new Rails app by running:
+All the following commands are designed to be executed from the root path of an already initialized cloud except `init`.
+
+### Init
+
+Generates a default Rails app with the corresponding infrastructure in the specified location:
 ```
-cloud init path_to/awesome/new_app
+cloud init awesome/app
 ```
-This will generate a Rails app from the current stable Rails branch.
 
-A Cloud deployment can be added to an existing Rails app by navigating to the root directory and running:
+Or used to add to an existing Rails app by navigating to the root directory and running:
 ```
 cloud init
 ```
 This will leave the existing application intact with the addition of a `cloud` directory, that will contain the required configuration plus tmp folder with samples of some suggested tweaks.
 
-## How to manage a cloud?
-
-All the following commands are designed to be executed from the root path of an already initialized cloud.
 
 ### Destroy
 
@@ -131,7 +131,7 @@ cloud attach chrome
 
 Creates temporary tunnel into a pod:
 ```
-cloud tunnel mysql
+cloud tunnel postgres
 ```
 You would need to ssh into hacker@cloud previously to stablish the connection.
 
@@ -144,7 +144,7 @@ cloud exec -- bundle update
 
 Or any other one:
 ```
-cloud exec mysql -- mysqldump
+cloud exec postgres -- pg_dump development > db.sql
 ```
 
 ### Open
@@ -168,7 +168,7 @@ cloud log redis
 
 ## How to manage contexts?
 
-Contexts are the cloud locations, you will have a default local one running using a xhyve vm for local development, and you can add as many remote one as you like to connect to remote providers like AWS. 
+Contexts are the cloud locations, you will have a default local one running using a XHYVE VM for local development, and you can add as many remote one as you like to connect to remote providers like AWS. 
 
 Each context file saves all the settings needed by that context in the form of simple shell variables.
 
@@ -198,7 +198,7 @@ Edits the specified context:
 ```
 cloud contexts edit remote
 ```
-Will first open the file to edit using $EDIT and then re-run the setup avoiding any stage that is already configured. 
+Will first open the file to edit using `$EDITOR` and then re-run the setup avoiding any stage that is already configured. 
 
 You can use to complete a premature ended add previous procedure, or by removing one setting, you can execute the respective remote setup block again.
 
@@ -234,7 +234,7 @@ Adds a new environment:
 ```
 cloud envis add production
 ```
-Will create new file and open it to edit using $EDITOR. 
+Will create new file and open it to edit using `$EDITOR`. 
 
 ### Edit
 
@@ -242,7 +242,7 @@ Edits the specified environment:
 ```
 cloud envs edit production
 ```
-Will open the configuration file to edit it using $EDITOR. 
+Will open the configuration file to edit it using `$EDITOR`. 
 
 ### Delete
 
@@ -251,7 +251,7 @@ Deletes specified environment:
 cloud envs delete production
 ```
 
-## How to manage the vm?
+## How to manage the VM?
 
 All commands related to the virtual machine are prefixed with `vm`.
 
@@ -287,7 +287,7 @@ cloud vm shell
 
 Executes command:
 ```
-cloud vm exec -- apt update
+cloud vm exec -- echo hello from my vm!!! 
 ```
 
 ### Update
