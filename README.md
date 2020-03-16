@@ -1,10 +1,69 @@
 # Cloud
 
-Provides a simple orchestration of a Ruby on Rails deployment within a localised Kubernetes environment on macOS utilising a xhyve hypervisor.
+Provides a simple orchestration of a Ruby on Rails deployment on macOS within a localised Kubernetes environment utilising a XHYVE hypervisor.
 
 ## Why?
 
 I want to provide a standarized way to manage infrastructure, to enable development teams to work on a consistent platform, whilst lowering the entry bar to run Kubernetes.
+
+## How using this tool looks like?
+
+The main goal is to keep you development flow the same, so a lot has been done to try to avoid overhead and keep every command as simple and intuitive a possible if is needed.
+
+Macro speaking, a usual development flow once everything is setup, would go like this:
+
+### 1. Start making the required changes on the files
+
+Maybe pulling from git the latest changes and using your favorite editor edit the project.
+
+### 2. Ocassionally using Rails/Ruby commands
+
+The script maps all Rails/Ruby commands into the vm seamless, so all the commands you already know will be the same:
+
+```
+bin/rails db:migrate
+bin/rails c
+bin/rails test
+```
+
+Since Rails is dockerized and bind to the root folder, all changes all picked automatically and the local Rails server is ensured to be up. So there is no need to do constants restarts or transfer files.
+
+You might want to sneak into the local server from time to time:
+```
+cloud log rails
+```
+
+Or bump the version of any:
+```
+cloud envs edit development # bump version of the corresping image target
+cloud build
+cloud deploy
+```
+
+### 3. Deploy changes into the production server
+
+This might go like this:
+
+Build docker images:
+```
+CLOUD=remote cloud build
+```
+
+Send the new deployment:
+```
+CLOUD=remote cloud deploy
+```
+This will trigger a rolling update for each modified pod.
+
+Or manually restart a specific pod:
+```
+CLOUD=remote cloud restart rails
+```
+
+Ensure everything is in good shape:
+```
+CLOUD=remote cloud status
+```
 
 ## How to install?
 
@@ -16,7 +75,7 @@ This will commence the cloud install script and prompt for some initial configur
 
 The host administration password will be requested to complete the installation.
 
-Once is done you're going to be asked to prefix the $PATH on your shell profile. This will map any rails commands to the cloud instance inside the root directory, whilst leaving any additional Ruby management tools (rbenv, RVM etc) intact for other projects.
+Once is done you're going to be asked to prefix the `$PATH` on your shell profile. This will map any Rails commands to the cloud instance inside the root directory, whilst leaving any additional Ruby management tools (Rbenv, RVM, etc) intact for other projects.
 
 ## How to uninstall?
 
@@ -38,7 +97,7 @@ If you want a specific version use the corresponding tag:
 cloud update v1.4.0
 ```
 
-## How to manage a cloud?
+## What are clouds and how to manage them?
 
 Clouds are the combination of a Rails app and all his required infrastructure.
 
@@ -57,13 +116,13 @@ cloud init
 ```
 This will leave the existing application intact with the addition of a `cloud` directory, that will contain the required configuration plus tmp folder with samples of some suggested tweaks.
 
-
 ### Destroy
 
 Removes cloud folder and destroys cloud locally:
 ```
 cloud destroy
 ```
+THIS IS DESTRUCTIVE - YOU HAVE BEEN WARNED 
 
 ### Build
 
@@ -166,7 +225,7 @@ Or any other one:
 cloud log redis
 ```
 
-## How to manage contexts?
+## What are contexts and how to manage them?
 
 Contexts are the cloud locations, you will have a default local one running using a XHYVE VM for local development, and you can add as many remote one as you like to connect to remote providers like AWS. 
 
@@ -179,7 +238,7 @@ Lists all the available contexts:
 cloud contexts list
 ```
 
-If you avoid the `list` part, will work yoo:
+If you avoid the `list` part, will work too:
 ```
 cloud contexts
 ```
@@ -210,7 +269,7 @@ cloud contexts delete remote
 ```
 Right now we are not able to connects into remote providers to wipe all the remote resources, but we're working towards making this possible in the future.
 
-## How to manage environments?
+## What are environments and how to manage them?
 
 Environments are closely tight to `RAILS_ENV`, you should have one per each Rails environment to be able to switch between them. 
 
@@ -223,7 +282,7 @@ Lists all the available environments:
 cloud envs list
 ```
 
-If you avoid the `list` part, will work yoo:
+If you avoid the `list` part, will work too:
 ```
 cloud envs
 ```
