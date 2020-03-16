@@ -28,9 +28,9 @@ bin/rails c
 bin/rails test
 ```
 
-Since Rails is dockerized and bind to the root folder, all changes all picked automatically and the local Rails server is ensured to be up. So there is no need to do constants restarts or transfer files.
+Since Rails is dockerized and binded to the root folder, all changes all picked automatically and the local Rails server is ensured to be up. So there is no need to do constants restarts or transfer files.
 
-One way that the flow will change, is to check logs. Beacuse everything is dockerdize, at  some point you may want to sneak into the local server logs using:
+One way that the flow will change, is in how to check logs. Because everything is dockerized, at some point you may want to sneak into the pod using:
 ```
 cloud log rails
 ```
