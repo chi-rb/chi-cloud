@@ -86,7 +86,7 @@ If you want a specific version use the corresponding tag:
 cloud update v1.4.0
 ```
 
-## What are clouds and how to manage them?
+## What are clouds and how to use them?
 
 Clouds are the combination of a Rails app and all his required infrastructure.
 
@@ -214,7 +214,7 @@ Or any other one:
 cloud log redis
 ```
 
-## What are contexts and how to manage them?
+## What are contexts and how to use them?
 
 Contexts are the cloud locations, you will have a default local one running using a XHYVE VM for local development, and you can add as many remote one as you like to connect to remote providers like AWS. 
 
@@ -258,7 +258,7 @@ cloud contexts delete remote
 ```
 Right now we are not able to connects into remote providers to wipe all the remote resources, but we're working towards making this possible in the future.
 
-## What are environments and how to manage them?
+## What are environments and how to use them?
 
 Environments are closely tight to `RAILS_ENV`, you should have one per each Rails environment to be able to switch between them. 
 
