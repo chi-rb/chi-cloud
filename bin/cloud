@@ -349,7 +349,7 @@ compile_statics() {
 	if [ $cloud_context != local ]; then
 		case $cloud_provider in
 		aws)
-			if [ ! -z $cloud_kubeconfig_path ]; then
+			if [ ! -z "$cloud_kubeconfig" ]; then
 				cat <<-YML > "$cloud_volume_path"
 					apiVersion: v1
 					kind: PersistentVolume
@@ -376,16 +376,6 @@ compile_statics() {
 				data:
 				  config.json: |
 				    { "credsStore": "ecr-login" }
-			YML
-			credentials=$(vm_ssh cat $aws_credentials_path | base64)
-			cat <<-YML > "$cloud_aws_path"
-				apiVersion: v1
-				kind: Secret
-				type: Opaque
-				metadata:
-				  name: aws
-				data:
-				  credentials: $credentials
 			YML
 		;;
 		esac
@@ -486,11 +476,13 @@ compile() {
 							      mountPath: /mnt
 							    - name: docker
 							      mountPath: /kaniko/.docker/
-							    - name: aws
-							      mountPath: /root/.aws/
 							    env:
-							    - name: AWS_PROFILE
-							      value: {{ aws_profile }}
+							    - name: AWS_ACCESS_KEY_ID
+							      value: {{ aws_access_key_id }}
+							    - name: AWS_SECRET_ACCESS_KEY
+							      value: {{ aws_secret_access_key }}
+							    - name: AWS_REGION
+							      value: {{ aws_region }}
 							  volumes:
 							  - name: mnt
 							    hostPath:
@@ -498,9 +490,6 @@ compile() {
 							  - name: docker
 							    configMap:
 							      name: docker
-							  - name: aws
-							    secret:
-							      secretName: aws
 						YML
 					;;
 					esac
@@ -564,9 +553,41 @@ cloud_boot() {
 		case $cloud_provider in
 		aws)
 			cloud_storage_class=efs-sc
-			cloud_kubeconfig_path=$vm_home_path/.kube/$cloud_id-$cloud_context
-			aws_credentials_path=$vm_home_path/.aws/credentials
-			aws_profile=$cloud_name-$cloud_context
+			cloud_kubeconfig=$(cat <<-YML
+				apiVersion: v1
+				clusters:
+				- cluster:
+				    server: $aws_endpoint
+				    certificate-authority-data: $aws_certificate
+				  name: kubernetes
+				contexts:
+				- context:
+				    cluster: kubernetes
+				    user: aws
+				  name: aws
+				current-context: aws
+				kind: Config
+				preferences: {}
+				users:
+				- name: aws
+				  user:
+				    exec:
+				      apiVersion: client.authentication.k8s.io/v1alpha1
+				      command: aws
+				      env:
+				      - name: AWS_ACCESS_KEY_ID
+				        value: $aws_access_key_id
+				      - name: AWS_SECRET_ACCESS_KEY
+				        value: $aws_secret_access_key
+				      args:
+				      - --region
+				      - $aws_region
+				      - eks
+				      - get-token
+				      - --cluster-name
+				      - $aws_cluster_name
+			YML
+			)
 		;;
 		esac
 	else
@@ -653,6 +674,7 @@ cloud_set_paths() {
 		app_path=$PWD
 	fi
 	cloud_path=$app_path/cloud
+	cloud_kube_path=$cloud_path/kube
 	cloud_contexts_path=$cloud_path/contexts
 	cloud_local_path=$cloud_contexts_path/local
 	cloud_context_path=$cloud_contexts_path/$cloud_context
@@ -939,7 +961,7 @@ cloud_log_builds() {
 cloud_build() {
 	cloud_load
 	if [ $cloud_context != local ]; then
-		unset cloud_kubeconfig_path
+		unset cloud_kubeconfig
 	fi
 	cloud_clear_builds
 	compile build
@@ -957,7 +979,7 @@ cloud_deploy() {
 
 cloud_restart() {
 	cloud_load
-	if [ -z $cloud_kubeconfig_path ]; then
+	if [ -z "$cloud_kubeconfig" ]; then
 		cmd='delete pod '
 		if [ -z $1 ]; then
 			cmd+='-l type!=build'
@@ -1234,11 +1256,12 @@ vm_wait_ssh() {
 }
 
 vm_kubectl() {
-	cmd=$@
-	if [ ! -z $cloud_kubeconfig_path ]; then
-		cmd="--kubeconfig $cloud_kubeconfig_path $cmd"
+	cmd='vm_ssh sudo kubectl'
+	if [ ! -z "$cloud_kubeconfig" ]; then
+		echo "$cloud_kubeconfig" | $cmd --kubeconfig /dev/stdin $@
+	else
+		$cmd $@
 	fi
-	vm_ssh sudo kubectl $cmd
 }
 
 vm_download() {
@@ -1589,15 +1612,33 @@ vm_help() {
 # AWS
 
 aws() {
-	vm_ssh AWS_PAGER= aws $@ --profile $aws_profile || exit
+	vm_ssh \
+	AWS_ACCESS_KEY_ID=$aws_access_key_id \
+	AWS_SECRET_ACCESS_KEY=$aws_secret_access_key \
+	AWS_DEFAULT_REGION=$aws_region \
+	AWS_PAGER= \
+	aws $@ ||
+	exit
 }
 
 aws_config() {
 	begin Configure AWS
-	if [ -z $aws_region ]; then
-		aws configure
-		aws_region=$(aws configure get region | tr -dc '[:print:]')
-		add_conf "$cloud_context_path" aws_region
+	if [ -z $aws_access_key_id ] || [ -z $aws_secret_access_key ] || [ -z $aws_region ]; then
+		if [ -z $aws_access_key_id ]; then
+			printf 'Enter access key id: '
+			read aws_access_key_id
+			add_conf "$cloud_context_path" aws_access_key_id
+		fi
+		if [ -z $aws_secret_access_key ]; then
+			printf 'Enter secret access key: '
+			read -s aws_secret_access_key
+			add_conf "$cloud_context_path" aws_secret_access_key
+		fi
+		if [ -z $aws_region ]; then
+			printf 'Enter region:'
+			read aws_region
+			add_conf "$cloud_context_path" aws_region
+		fi
 	else
 		echo Already configured
 	fi
@@ -1831,6 +1872,11 @@ aws_create_cluster() {
 		echo Waiting to be active
 		wait_for aws_cluster_status ACTIVE
 		add_conf "$cloud_context_path" aws_cluster_name
+		json=$(aws eks describe-cluster --name $aws_cluster_name)
+		aws_endpoint=$(echo "$json" | read_json endpoint)
+		add_conf "$cloud_context_path" aws_endpoint
+		aws_certificate=$(echo "$json" | read_json data)
+		add_conf "$cloud_context_path" aws_certificate
 	else
 		echo Already created
 	fi
@@ -1868,19 +1914,6 @@ aws_nodegroup_status() {
 	read_json status
 }
 
-aws_create_kubeconfig() {
-	begin Creating Kubeconfig
-	if ! $(vm_ssh test -f $cloud_kubeconfig_path); then
-		aws eks update-kubeconfig \
-		--name $aws_cluster_name \
-		--kubeconfig $cloud_kubeconfig_path \
-		>/dev/null
-		add_conf "$cloud_context_path" cloud_kubeconfig_path
-	else
-		echo Already created
-	fi
-}
-
 aws_install_efs_csi() {
 	begin Installing EFS CSI
 	if [ -z $aws_efs_csi ]; then
@@ -1912,7 +1945,6 @@ aws_create_cloud() {
 	aws_create_mount_target 2
 	aws_create_cluster
 	aws_create_nodegroup
-	aws_create_kubeconfig
 	aws_install_efs_csi
 }
 
