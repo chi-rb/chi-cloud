@@ -41,17 +41,17 @@ This will look something like this:
 
 #### a) Build docker images:
 ```
-CLOUD=remote cloud build
+CLOUD_CONTEXT=remote cloud build
 ```
 
 #### b) Trigger a rolling update to make Rails pod fetch the new image:
 ```
-CLOUD=remote cloud restart rails
+CLOUD_CONTEXT=remote cloud restart rails
 ```
 
 #### c) Ensure everything is in good shape:
 ```
-CLOUD=remote cloud status
+CLOUD_CONTEXT=remote cloud status
 ```
 
 ## How to install?
