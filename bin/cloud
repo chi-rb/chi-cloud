@@ -46,11 +46,10 @@ user_pid_path=$user_cloud_path/pid
 user_disk_path=$user_cloud_path/disk.img
 user_agent_path=$HOME/Library/LaunchAgents/$agent_filename
 
-vm_user=hacker
+vm_user=root
 vm_name=cloud
 vm_mem=4G
 vm_cpus=4
-vm_home_path=/home/hacker
 
 k3s_latest_url=https://github.com/rancher/k3s/releases/latest
 k3s_path=/usr/local/bin/k3s
@@ -426,7 +425,7 @@ compile() {
 		esac
 	done
 	shift $((OPTIND-1))
-	rm -rf "$cloud_tmp_path"
+	rm -rf "$cloud_compile_path" "$cloud_apply_path" 
 	mkdir -p "$cloud_compile_path"
 	paths=$(find "$cloud_deploy_path/base" "$cloud_deploy_path/$cloud_env" -name \*.yml)
 	case $1 in
@@ -570,7 +569,7 @@ cloud_kubectl() {
 
 cloud_find_pod() {
 	name=${1:-$rails_pod}
-	echo $(cloud_kubectl get pod -l "name=$name" -o jsonpath='{.items[0].metadata.name}')
+	echo $(cloud_kubectl get pod -l name=$name -o jsonpath={.items[0].metadata.name})
 }
 
 cloud_pod_exec() {
@@ -756,6 +755,7 @@ cloud_set_paths() {
 	cloud_prod_path=$cloud_envs_path/production
 	cloud_env_path=$cloud_envs_path/$cloud_env
 	cloud_tmp_path=$app_path/tmp/cloud
+	cloud_kubeconfig_path=$cloud_tmp_path/kubeconfig
 	cloud_compile_path=$cloud_tmp_path/compile
 	cloud_apply_path=$cloud_tmp_path/apply
 	cloud_docker_path=$cloud_apply_path/docker.yml
@@ -840,6 +840,7 @@ cloud_install() {
 	cloud_authorize_nfsd
 	cloud_authorize_xhyve
 	vm_install nested
+	cloud_config
 	cloud_update_rc
 	complete
 }
@@ -974,21 +975,21 @@ cloud_open() {
 
 cloud_bin() {
 	cloud_set_paths
-	path=$1
-	name=$(basename $path)
+	abs_path=$1
+	target=$(basename $abs_path)
 	if cloud_dir_exists; then
 		shift
-		bin_path=bin/$name
-		if [ -f $bin_path ]; then
-			cmd=$bin_path
+		rel_path=bin/$target
+		if [ -f $rel_path ]; then
+			cmd=$rel_path
 		else
-			cmd=$name
+			cmd=$target
 		fi
 		cloud_exec -- $cmd $@
 	else
-		alt=$(which -a $name | grep -A 1 $path | tail -n 1)
+		alt=$(which -a $target | grep -A 1 $abs_path | tail -n 1)
 		if [ -z "$alt" ]; then
-			error "No alternative found for \`$name\`"
+			error "No alternative found for \`$target\`"
 		else
 			$alt $@
 		fi
@@ -1078,7 +1079,7 @@ cloud_restart() {
 cloud_shell() {
 	cloud_load
 	name=$(cloud_find_pod $1)
-	cloud_pod_exec $name /bin/sh
+	cloud_pod_exec $name /bin/bash
 }
 
 cloud_attach() {
@@ -1125,6 +1126,9 @@ cloud_log() {
 }
 
 cloud_config() {
+	if [ $cloud_context = local ]; then
+		vm_kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
+	fi
 	cat <<-YML | vm_kubectl apply -f -
 		apiVersion: v1
 		kind: PersistentVolumeClaim
@@ -1377,6 +1381,11 @@ vm_net_exists() {
 }
 
 vm_ssh() {
+	if [ $# -gt 0 ]; then
+		cmd="sh -c '$@'"
+	elif [ ! -t 0 ]; then
+		cmd=sh
+	fi
 	ssh -tq \
 	-o 'ConnectTimeout=10' \
 	-o 'ControlMaster=auto' \
@@ -1384,7 +1393,7 @@ vm_ssh() {
 	-o 'ControlPath=/tmp/%r@%h' \
 	-o 'UserKnownHostsFile=/dev/null' \
 	-o 'StrictHostKeyChecking=no' \
-	$vm_user@$vm_name "$@"
+	$vm_user@$vm_name $cmd
 }
 
 vm_wait_ssh() {
@@ -1403,11 +1412,12 @@ vm_wait_ssh() {
 
 vm_kubectl() {
 	if [ ! -z "$cloud_kubeconfig" ]; then
-		cmd="--kubeconfig <(echo \"$cloud_kubeconfig\") $@"
+		echo "$cloud_kubeconfig" > $cloud_kubeconfig_path
+		cmd="--kubeconfig \"$cloud_kubeconfig_path\" $@"
 	else
 		cmd=$@
 	fi
-	vm_ssh sudo bash -c \'kubectl "$cmd"\'
+	vm_ssh kubectl $cmd
 }
 
 vm_download() {
@@ -1471,7 +1481,7 @@ vm_share_home() {
 	if ! export_exists; then
 		echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
 		update_nfsd
-		vm_ssh sudo sh <<-SSH
+		vm_ssh <<-SSH
 			echo "$mac_ip:$exports_home_path\t$HOME\tnfs local_lock=all\t0 0" >> /etc/fstab
 			mkdir -p $HOME
 			mount $HOME
@@ -1701,12 +1711,15 @@ vm_exec() {
 	else
 		error Wrong format
 	fi
-	vm_ssh $@
+	vm_ssh <<-SSH
+		cd $PWD
+		$@
+	SSH
 }
 
 vm_update_packages() {
 	begin Updating Packages
-	vm_ssh sudo sh <<-SSH
+	vm_ssh <<-SSH
 		apt update
 		DEBIAN_FRONTEND=noninteractive apt upgrade -y && apt autoremove -y
 	SSH
@@ -1719,7 +1732,7 @@ vm_update_k3s() {
 	latest_version=$(curl -s $k3s_latest_url | grep -oE $regex | head -n1)
 	if [ -z $current_version ] || [ $current_version != $latest_version ]; then
 		url="https://github.com/rancher/k3s/releases/download/$latest_version/k3s"
-		vm_ssh sudo sh <<-SSH
+		vm_ssh <<-SSH
 			systemctl stop k3s
 			curl -Lo $k3s_path $url
 			chmod +x $k3s_path
