@@ -52,7 +52,7 @@ vm_name=cloud
 vm_mem=4G
 vm_cpus=4
 vm_id=3646C502-7C09-4259-B71D-4B4BB447D6A6
-mac_ip=192.168.64.35
+vm_ip=192.168.64.35
 
 k3s_latest_url=https://github.com/rancher/k3s/releases/latest
 k3s_path=/usr/local/bin/k3s
