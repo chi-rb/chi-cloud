@@ -2,7 +2,7 @@
 
 # SETTINGS
 
-wait_count=60
+wait_count=15
 hosts_path=/etc/hosts
 bin_path=/usr/local/bin
 nfsd_path=/sbin/nfsd
@@ -50,6 +50,7 @@ vm_user=root
 vm_name=cloud
 vm_mem=4G
 vm_cpus=4
+vm_id=3646C502-7C09-4259-B71D-4B4BB447D6A6
 
 k3s_latest_url=https://github.com/rancher/k3s/releases/latest
 k3s_path=/usr/local/bin/k3s
@@ -1493,10 +1494,8 @@ vm_share_home() {
 
 vm_init() {
 	begin Initializing Virtual Machine
-	if [ -z $vm_id ]; then
-		vm_id=$(gen_id)
+	if [ ! -f $user_conf_path ]; then
 		ensure_file $user_conf_path
-		add_conf $user_conf_path vm_id
 		vm_config nested
 	else
 		echo Already initialized
@@ -1524,17 +1523,9 @@ vm_delete_agent() {
 	fi
 }
 
-vm_id_exists() {
-	cat $user_conf_path | grep vm_id >/dev/null 2>&1
-}
-
 vm_delete_settings() {
 	begin Deleting Settings
 	if [ -f $user_conf_path ]; then
-		if vm_id_exists; then
-			delete_conf $user_conf_path vm_id
-			found=true
-		fi
 		if vm_net_exists; then
 			for name in ${net_setting_names[@]}; do
 				delete_conf $user_conf_path $name
