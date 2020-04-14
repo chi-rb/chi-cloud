@@ -8,6 +8,7 @@ bin_path=/usr/local/bin
 nfsd_path=/sbin/nfsd
 tcc_path=/Library/Application\ Support/com.apple.TCC/TCC.db
 rails_pod=rails
+mac_ip=192.168.64.1
 
 terminal_path=/System/Applications/Utilities/Terminal.app
 terminal_client=com.apple.Terminal
@@ -51,14 +52,11 @@ vm_name=cloud
 vm_mem=4G
 vm_cpus=4
 vm_id=3646C502-7C09-4259-B71D-4B4BB447D6A6
+mac_ip=192.168.64.35
 
 k3s_latest_url=https://github.com/rancher/k3s/releases/latest
 k3s_path=/usr/local/bin/k3s
 
-net_setting_names=(
-	mac_ip
-	vm_ip
-)
 user_setting_names=(
 	vm_mem
 	vm_cpus
@@ -1127,7 +1125,7 @@ cloud_log() {
 }
 
 cloud_config() {
-	if [ $cloud_context = local ]; then
+	if [ -z "$cloud_kubeconfig" ]; then
 		vm_kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
 	fi
 	cat <<-YML | vm_kubectl apply -f -
@@ -1368,19 +1366,6 @@ vm_shell() {
 	vm_ssh
 }
 
-vm_net_exists() {
-	if [ -f $user_conf_path ]; then
-		for name in ${net_setting_names[@]}; do
-			if cat $user_conf_path | grep $name >/dev/null 2>&1; then
-				return 0
-			fi
-		done
-		return 1
-	else
-		return 1
-	fi
-}
-
 vm_ssh() {
 	if [ $# -gt 0 ]; then
 		cmd="sh -c '$@'"
@@ -1442,32 +1427,6 @@ vm_create_disk() {
 	fi
 }
 
-vm_first_boot() {
-	begin First Boot
-	if ! vm_net_exists; then
-		echo Waiting to receive ip
-		while :; do
-			printf .
-			agent_start
-			mkdir -p $tmp_path
-			nc -l 1234 > $tmp_conf_path & sleep $wait_count
-			kill $! 2>/dev/null
-			wait $! 2>/dev/null
-			if [ -z "$(cat $tmp_conf_path)" ]; then
-				agent_stop
-			else
-				break
-			fi
-		done
-		. $tmp_conf_path
-		cat $tmp_conf_path | add_conf $user_conf_path -
-		rm $tmp_conf_path
-	else
-		echo Already booted
-	fi
-	echo
-}
-
 vm_add_host() {
 	begin Adding Hostname
 	if ! host_exists; then
@@ -1506,7 +1465,7 @@ vm_install() {
 	vm_download
 	vm_init
 	vm_create_disk
-	vm_first_boot
+	vm_start nested
 	vm_add_host
 	vm_share_home
 	if [ "$1" != nested ]; then
@@ -1526,15 +1485,6 @@ vm_delete_agent() {
 vm_delete_settings() {
 	begin Deleting Settings
 	if [ -f $user_conf_path ]; then
-		if vm_net_exists; then
-			for name in ${net_setting_names[@]}; do
-				delete_conf $user_conf_path $name
-			done
-			found=true
-		fi
-		if [ "$found" != true ]; then
-			echo Not found
-		fi
 	else
 		echo Not found
 	fi
