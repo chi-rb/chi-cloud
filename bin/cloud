@@ -1465,8 +1465,8 @@ vm_install() {
 	vm_download
 	vm_init
 	vm_create_disk
-	vm_start nested
 	vm_add_host
+	vm_start nested
 	vm_share_home
 	if [ "$1" != nested ]; then
 		complete
