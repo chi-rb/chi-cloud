@@ -1482,14 +1482,6 @@ vm_delete_agent() {
 	fi
 }
 
-vm_delete_settings() {
-	begin Deleting Settings
-	if [ -f $user_conf_path ]; then
-	else
-		echo Not found
-	fi
-}
-
 vm_delete_files() {
 	begin Deleting Files
 	if [ -d $repo_vm_path ]; then
@@ -1524,7 +1516,6 @@ vm_uninstall() {
 	vm_stop nested
 	vm_delete_agent
 	if [ "$1" != nested ]; then
-		vm_delete_settings
 		vm_delete_files
 	fi
 	vm_delete_hostname
