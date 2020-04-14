@@ -2,7 +2,7 @@
 
 # SETTINGS
 
-wait_count=15
+wait_count=60
 hosts_path=/etc/hosts
 bin_path=/usr/local/bin
 nfsd_path=/sbin/nfsd
