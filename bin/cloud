@@ -13,9 +13,6 @@ mac_ip=192.168.64.1
 terminal_path=/System/Applications/Utilities/Terminal.app
 terminal_client=com.apple.Terminal
 
-agent_name=com.cloud
-agent_filename=$agent_name.plist
-
 tmp_path=/tmp/chi-cloud
 tmp_repo_path=$tmp_path/repo
 tmp_base_path=$tmp_path/base
@@ -45,7 +42,6 @@ user_cloud_path=$HOME/.cloud
 user_conf_path=$user_cloud_path/conf
 user_pid_path=$user_cloud_path/pid
 user_disk_path=$user_cloud_path/disk.img
-user_agent_path=$HOME/Library/LaunchAgents/$agent_filename
 
 vm_user=root
 vm_name=cloud
@@ -239,33 +235,69 @@ update_nfsd() {
 	sudo $nfsd_path update
 }
 
-# AGENT
+# XHYVE
 
-agent_start() {
-	sudo launchctl load -w $user_agent_path >/dev/null
-	sudo launchctl list | grep $agent_name | awk '{ print $1 }' > $user_pid_path
+xhyve_ensure() {
+	if ! xhyve_running; then
+		xhyve_start silent
+	fi
 }
 
-agent_stop() {
-	sudo launchctl unload -w $user_agent_path >/dev/null 2>&1
-	while agent_running; do
+xhyve_start() {
+	sudo nohup $repo_xhyve_path \
+	-U $vm_id \
+	-A \
+	-c $vm_cpus \
+	-m $vm_mem \
+	-s 0,hostbridge \
+	-s 2,virtio-net \
+	-s 4,virtio-blk,$user_disk_path \
+	-f "kexec,$repo_vmlinuz_path,$repo_initrd_path,root=/dev/vda1 ro" \
+	&>/dev/null &
+	echo $! > $user_pid_path
+	xhyve_wait_k8s $@
+}
+
+xhyve_booting() {
+	! $(vm_ssh kubectl get pods >/dev/null 2>&1)
+}
+
+xhyve_wait_k8s() {
+	while xhyve_booting; do
+		if [ "$1" != silent ]; then
+			printf .
+		fi
 		sleep $wait_count
 	done
+	if [ "$1" != silent ]; then
+		echo
+	fi
+}
+
+xhyve_stop() {
+	vm_exec -- halt
+	xhyve_wait_pid $@
 	rm $user_pid_path
 }
 
-agent_running() {
+xhyve_wait_pid() {
+	while xhyve_running; do
+		if [ "$1" != silent ]; then
+			printf .
+		fi
+		sleep $wait_count
+	done
+	if [ "$1" != silent ]; then
+		echo
+	fi
+}
+
+xhyve_running() {
 	if [ -f $user_pid_path ]; then
 		vm_pid=$(cat $user_pid_path)
 		ps -p $vm_pid >/dev/null 2>&1
 	else
 		return 1
-	fi
-}
-
-agent_ensure() {
-	if ! agent_running; then
-		error Agent not running
 	fi
 }
 
@@ -582,7 +614,7 @@ cloud_dir_exists() {
 }
 
 cloud_load() {
-	agent_ensure
+	xhyve_ensure
 	cloud_set_paths
 	cloud_ensure_dir
 	cloud_ensure_context
@@ -1243,7 +1275,7 @@ contexts_choose_provider() {
 }
 
 contexts_add() {
-	agent_ensure
+	xhyve_ensure
 	cloud_set_paths -c $1
 	cloud_ensure_dir
 	if ! cloud_context_exists; then
@@ -1268,7 +1300,7 @@ contexts_add() {
 }
 
 contexts_edit() {
-	agent_ensure
+	xhyve_ensure
 	cloud_set_paths -c $1
 	cloud_ensure_dir
 	cloud_ensure_context
@@ -1285,7 +1317,7 @@ contexts_edit() {
 }
 
 contexts_delete() {
-	agent_ensure
+	xhyve_ensure
 	cloud_set_paths -c $1
 	cloud_ensure_dir
 	cloud_ensure_context
@@ -1362,7 +1394,7 @@ envs_help() {
 # VM
 
 vm_shell() {
-	agent_ensure
+	xhyve_ensure
 	vm_ssh
 }
 
@@ -1380,20 +1412,6 @@ vm_ssh() {
 	-o 'UserKnownHostsFile=/dev/null' \
 	-o 'StrictHostKeyChecking=no' \
 	$vm_user@$vm_name $cmd
-}
-
-vm_wait_ssh() {
-	begin Waiting SSH
-	while :; do
-		vm_ssh exit
-		if [ $? = 0 ]; then
-			echo
-			break
-		else
-			printf .
-			sleep $wait_count
-		fi
-	done
 }
 
 vm_kubectl() {
@@ -1473,15 +1491,6 @@ vm_install() {
 	fi
 }
 
-vm_delete_agent() {
-	begin Deleting Agent
-	if [ -f $user_agent_path ]; then
-		sudo rm $user_agent_path
-	else
-		echo Not found
-	fi
-}
-
 vm_delete_files() {
 	begin Deleting Files
 	if [ -d $repo_vm_path ]; then
@@ -1514,7 +1523,6 @@ vm_unshare_home() {
 
 vm_uninstall() {
 	vm_stop nested
-	vm_delete_agent
 	if [ "$1" != nested ]; then
 		vm_delete_files
 	fi
@@ -1559,45 +1567,8 @@ vm_choose_settings() {
 	fi
 }
 
-vm_install_agent() {
-	begin Installing Agent
-	mkdir -p $(dirname $user_agent_path)
-	cat <<-XML | sudo tee $user_agent_path >/dev/null
-		<?xml version="1.0" encoding="UTF-8"?>
-		<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-		<plist version="1.0">
-			<dict>
-				<key>Label</key>
-				<string>com.cloud</string>
-				<key>ProgramArguments</key>
-				<array>
-					<string>$repo_xhyve_path</string>
-					<string>-A</string>
-					<string>-U</string>
-					<string>$vm_id</string>
-					<string>-c</string>
-					<string>$vm_cpus</string>
-					<string>-m</string>
-					<string>$vm_mem</string>
-					<string>-s</string>
-					<string>0,hostbridge</string>
-					<string>-s</string>
-					<string>2,virtio-net</string>
-					<string>-s</string>
-					<string>4,virtio-blk,$user_disk_path</string>
-					<string>-f</string>
-					<string>kexec,$repo_vmlinuz_path,$repo_initrd_path,root=/dev/vda1 ro</string>
-				</array>
-				<key>RunAtLoad</key>
-				<true/>
-			</dict>
-		</plist>
-	XML
-}
-
 vm_config() {
 	vm_choose_settings
-	vm_install_agent
 	if [ "$1" != nested ]; then
 		vm_restart
 		complete
@@ -1606,9 +1577,8 @@ vm_config() {
 
 vm_start() {
 	begin Starting Virtual Machine
-	if ! agent_running; then
-		agent_start
-		vm_wait_ssh
+	if ! xhyve_running; then
+		xhyve_start
 	else
 		echo Already running
 	fi
@@ -1619,8 +1589,8 @@ vm_start() {
 
 vm_stop() {
 	begin Stopping Virtual Machine
-	if agent_running; then
-		agent_stop
+	if xhyve_running; then
+		xhyve_stop
 	else
 		echo Not running
 	fi
@@ -1637,16 +1607,23 @@ vm_restart() {
 }
 
 vm_exec() {
-	agent_ensure
+	xhyve_ensure
 	if [ $# -gt 1 ] && [ "$1" = -- ]; then
 		shift
 	else
 		error Wrong format
 	fi
-	vm_ssh <<-SSH
-		cd $PWD
-		$@
-	SSH
+	case $PWD in
+	$HOME*)
+		vm_ssh <<-SSH
+			cd $PWD
+			$@
+		SSH
+	;;
+	*)
+		vm_ssh $@
+	;;
+	esac
 }
 
 vm_update_packages() {
@@ -1676,7 +1653,7 @@ vm_update_k3s() {
 }
 
 vm_update() {
-	agent_ensure
+	xhyve_ensure
 	vm_update_packages
 	vm_update_k3s
 	complete
@@ -1690,9 +1667,9 @@ vm_help() {
 		Available commands:
 			install       Installs virtual machine
 			uninstall     Uninstalls virtual machine
-			start         Starts agent
-			stop          Stops agent
-			restart       Stops and starts agent
+			start         Starts xhyve
+			stop          Stops xhyve
+			restart       Stops and starts xhyve
 			shell         Opens a shell
 			exec          Executes command
 			update        Updates operating system
