@@ -1,1 +1,8 @@
 .DS_Store
+
+vm/disk.img
+vm/disk.img.xz
+vm/install.img
+vm/seed.img
+vm/vmlinuz
+vm/initrd

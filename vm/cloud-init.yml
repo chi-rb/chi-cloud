@@ -1,0 +1,63 @@
+#cloud-config
+hostname: cloud
+growpart:
+  mode: auto
+  devices:
+  - /
+package_update: true
+packages:
+- nfs-common
+write_files:
+- path: /etc/profile.d/editor.sh
+  owner: root:root
+  permissions: '0644'
+  content: |
+    export EDITOR=vi
+- path: /usr/local/bin/pack-img
+  owner: root:root
+  permissions: '0755'
+  content: |
+    #!/bin/sh
+    apt autoremove -y
+
+    curl -sfL https://get.k3s.io | sh -
+    cat <<-EOF >> /etc/rancher/k3s/registries.yaml
+      mirrors:
+        "cloud:32000":
+          endpoint:
+          - "http://cloud:32000"
+    EOF
+    service k3s restart
+
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+    sed -i 's/#PermitEmptyPasswords no/PermitEmptyPasswords yes/' /etc/ssh/sshd_config
+    sed -i 's/nullok_secure/nullok/' /etc/pam.d/common-auth
+    service sshd reload
+
+    passwd -d root
+    touch /root/.hushlogin
+
+    k3s-killall.sh
+    systemctl stop \
+    syslog.socket \
+    systemd-journald.socket \
+    systemd-journald-dev-log.socket \
+    systemd-journald-audit.socket \
+    syslog.socket \
+    rsyslog.service \
+    unattended-upgrades.service
+
+    apt clean
+    rm -rf \
+    /root/.cache \
+    /var/log/* \
+    /tmp/*
+
+    mount -o ro,remount /
+    zerofree /dev/vda1
+
+    rm $0
+    halt
+runcmd:
+- pack-img

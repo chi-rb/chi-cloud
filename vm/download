@@ -1,0 +1,7 @@
+#!/bin/sh
+
+base_url=https://cloud-images.ubuntu.com/bionic/current
+
+curl $base_url/bionic-server-cloudimg-amd64.img > install.img
+curl $base_url/unpacked/bionic-server-cloudimg-amd64-vmlinuz-generic > vmlinuz
+curl $base_url/unpacked/bionic-server-cloudimg-amd64-initrd-generic > initrd

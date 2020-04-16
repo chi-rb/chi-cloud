@@ -1,0 +1,9 @@
+#!/bin/sh
+
+rm -f \
+install.img \
+initrd \
+vmlinuz \
+disk.img \
+disk.img.xz \
+seed.img
