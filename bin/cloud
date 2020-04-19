@@ -1616,7 +1616,7 @@ vm_exec() {
 	case $PWD in
 	$HOME*)
 		vm_ssh <<-SSH
-			cd $PWD
+			cd "$PWD"
 			$@
 		SSH
 	;;
