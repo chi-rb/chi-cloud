@@ -31,9 +31,10 @@ repo_path=/usr/local/cloud
 repo_app_path=$repo_path/app
 repo_base_path=$repo_app_path/base
 repo_vm_path=$repo_path/vm
-repo_initrd_path=$repo_vm_path/initrd
-repo_vmlinuz_path=$repo_vm_path/vmlinuz
-repo_disk_path=$repo_vm_path/disk.img.xz
+repo_boot_path=$repo_vm_path/boot
+repo_initrd_path=$repo_boot_path/initrd
+repo_vmlinuz_path=$repo_boot_path/vmlinuz
+repo_disk_path=$repo_boot_path/disk.img.xz
 repo_bin_path=$repo_path/bin
 repo_xhyve_path=$repo_bin_path/xhyve
 repo_ruby_path=$repo_bin_path/ruby
@@ -1377,8 +1378,8 @@ vm_kubectl() {
 
 vm_download() {
 	begin Dowloading Images
-	if [ ! -d $repo_vm_path ]; then
-		mkdir $repo_vm_path
+	if [ ! -d $repo_boot_path ]; then
+		mkdir -p $repo_boot_path
 		curl -o $repo_initrd_path $s3_initrd_url
 		curl -o $repo_vmlinuz_path $s3_vmlinuz_url
 		curl -o $repo_disk_path $s3_disk_url
