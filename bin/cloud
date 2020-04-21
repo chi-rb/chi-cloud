@@ -1005,7 +1005,7 @@ cloud_init() {
 cloud_open() {
 	cloud_load
 	if [ $cloud_context = local ]; then
-		url=$vm_name:$rails_cluster_port
+		url=$vm_name/$cloud_id
 	else
 		url=$cloud_host
 	fi
