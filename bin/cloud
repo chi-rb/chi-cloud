@@ -359,13 +359,11 @@ compile_tpls() {
 		export "${name}_name=$pod_name"
 		if [ -f "$cloud_build_path/$name/Dockerfile" ]; then
 			if [ $cloud_context = local ]; then
-				host=cloud
-			elif [ ! -z "$cloud_kubeconfig" ]; then
-				host=127.0.0.1
+				host=registry:5000
 			else
-				host=$cloud_host
+				host=registry.$cloud_host
 			fi
-			export "${name}_image=$host:32000/$cloud_env/$name"
+			export "${name}_image=$host/$cloud_env/$name"
 		fi
 	done
 	for i in ${!paths[@]}; do
@@ -379,7 +377,25 @@ compile_tpls() {
 }
 
 compile_statics() {
-	if [ $cloud_context != local ]; then
+	if [ $cloud_context = local ]; then
+		cat <<-YML > "$cloud_ingress_path"
+			apiVersion: networking.k8s.io/v1beta1
+			kind: Ingress
+			metadata:
+			  name: ingress
+			  annotations:
+			    kubernetes.io/ingress.class: "traefik"
+			    traefik.ingress.kubernetes.io/rewrite-target: /
+			spec:
+			  rules:
+			  - http:
+			      paths:
+			      - path: $cloud_relative_path
+			        backend:
+			          serviceName: rails
+			          servicePort: 80
+		YML
+	else
 		case $cloud_provider in
 		aws)
 			if [ ! -z "$cloud_kubeconfig" ]; then
@@ -393,7 +409,7 @@ compile_statics() {
 					    storage: 1Gi
 					  volumeMode: Filesystem
 					  accessModes:
-					  - ReadWriteMany
+					  - $cloud_access_mode
 					  persistentVolumeReclaimPolicy: Retain
 					  storageClassName: efs-sc
 					  csi:
@@ -401,17 +417,39 @@ compile_statics() {
 					    volumeHandle: $aws_file_system_id
 				YML
 			fi
-			cat <<-YML > "$cloud_docker_path"
-				apiVersion: v1
-				kind: ConfigMap
-				metadata:
-				  name: docker
-				data:
-				  config.json: |
-				    { "credsStore": "ecr-login" }
-			YML
 		;;
 		esac
+		cat <<-YML > "$cloud_balancers_path"
+			apiVersion: v1
+			kind: Service
+			metadata:
+			  name: nginx-public
+			  labels:
+			    name: nginx-public
+			spec:
+			  type: LoadBalancer
+			  selector:
+			    name: nginx
+			  ports:
+			  - name: nginx-public
+			    port: 80
+			    targetPort: 80
+			---
+			apiVersion: v1
+			kind: Service
+			metadata:
+			  name: registry-public
+			  labels:
+			    name: registry-public
+			spec:
+			  type: LoadBalancer
+			  selector:
+			    name: registry
+			  ports:
+			  - name: registry-public
+			    port: 80
+			    targetPort: 5000
+		YML
 	fi
 	cat <<-YML > "$cloud_namespace_path"
 		apiVersion: v1
@@ -435,6 +473,48 @@ compile_statics() {
 		  resources:
 		    requests:
 		      storage: 1Gi
+	YML
+	cat <<-YML > "$cloud_registry_path"
+		apiVersion: v1
+		kind: Service
+		metadata:
+		  name: registry
+		  labels:
+		    name: registry
+		spec:
+		  selector:
+		    name: registry
+		  ports:
+		  - name: registry
+		    port: 5000
+		    nodePort: null
+		---
+		apiVersion: apps/v1
+		kind: Deployment
+		metadata:
+		  name:  registry
+		  labels:
+		    name: registry
+		spec:
+		  selector:
+		    matchLabels:
+		      name: registry
+		  template:
+		    metadata:
+		      labels:
+		        name: registry
+		    spec:
+		      containers:
+		      - image: registry:2
+		        name: redis
+		        volumeMounts:
+		        - mountPath: /var/lib/registry
+		          name: data
+		          subPath: registry
+		      volumes:
+		      - name: data
+		        persistentVolumeClaim:
+		          claimName: data
 	YML
 	namespaces=$(find "$cloud_apply_path" -type d -mindepth 1 -maxdepth 1 | xargs basename)
 	resources=$(ls "$cloud_apply_path" | sed 's/^/  - /g')
@@ -465,115 +545,35 @@ compile() {
 			name=$(basename "$path" | sed 's/\.yml//')
 			if [ -d "$cloud_build_path/$name" ]; then
 				target_path="$cloud_compile_path/$name.yml"
-				if [ $cloud_context = local ]; then
-					cat <<-YML > "$target_path"
-						apiVersion: v1
-						kind: Pod
-						metadata:
-						  name: {{ name }}-build
-						  labels:
-						    name: {{ name }}-build
-						    type: build
-						spec:
-						  restartPolicy: Never
-						  containers:
-						  - image: gcr.io/kaniko-project/executor:latest
-						    name: kaniko
-						    args:
-						    - --cache=$cache
-						    - --cache-ttl=1h
-						    - --destination={{ image }}
-						    - --insecure
-						    - --context=/mnt
-						    - --dockerfile=/cloud/build/{{ name }}/Dockerfile
-						    - --build-arg=RAILS_ENV={{ cloud_env }}
-						    volumeMounts:
-						    - name: mnt
-						      mountPath: /mnt
-						    - name: cache
-						      mountPath: /cache
-						      subPath: kaniko
-						  volumes:
-						  - name: mnt
-						    hostPath:
-						      path: {{ app_path }}
-						  - name: cache
-						    persistentVolumeClaim:
-						      claimName: data
-					YML
-				else
-					case $cloud_provider in
-					rancher)
-						cat <<-YML > "$target_path"
-							apiVersion: v1
-							kind: Pod
-							metadata:
-							  name: {{ name }}-build
-							  labels:
-							    name: {{ name }}-build
-							    type: build
-							spec:
-							  restartPolicy: Never
-							  containers:
-							  - image: gcr.io/kaniko-project/executor:latest
-							    name: kaniko
-							    args:
-							    - --destination={{ image }}
-							    - --insecure
-							    - --context=/mnt
-							    - --dockerfile=/cloud/build/{{ name }}/Dockerfile
-							    - --build-arg=RAILS_ENV={{ cloud_env }}
-							    volumeMounts:
-							    - name: mnt
-							      mountPath: /mnt
-							  volumes:
-							  - name: mnt
-							    hostPath:
-							      path: {{ app_path }}
-						YML
-					;;
-					aws)
-						cat <<-YML > "$target_path"
-							apiVersion: v1
-							kind: Pod
-							metadata:
-							  name: {{ name }}-build
-							  labels:
-							    name: {{ name }}-build
-							    type: build
-							spec:
-							  restartPolicy: Never
-							  containers:
-							  - image: gcr.io/kaniko-project/executor:latest
-							    name: kaniko
-							    args:
-							    - --destination={{ image }}
-							    - --context=/mnt
-							    - --dockerfile=/cloud/build/{{ name }}/Dockerfile
-							    - --build-arg=RAILS_ENV={{ cloud_env }}
-							    volumeMounts:
-							    - name: mnt
-							      mountPath: /mnt
-							    - name: docker
-							      mountPath: /kaniko/.docker/
-							    env:
-							    - name: AWS_ACCESS_KEY_ID
-							      value: {{ aws_access_key_id }}
-							    - name: AWS_SECRET_ACCESS_KEY
-							      value: {{ aws_secret_access_key }}
-							    - name: AWS_REGION
-							      value: {{ aws_region }}
-							  volumes:
-							  - name: mnt
-							    hostPath:
-							      path: {{ app_path }}
-							  - name: docker
-							    configMap:
-							      name: docker
-						YML
-					;;
-					esac
-				fi
+				cat <<-YML > "$target_path"
+					apiVersion: v1
+					kind: Pod
+					metadata:
+					  name: {{ name }}-build
+					  labels:
+					    name: {{ name }}-build
+					    type: build
+					spec:
+					  restartPolicy: Never
+					  containers:
+					  - image: gcr.io/kaniko-project/executor:latest
+					    name: kaniko
+					    args:
+					    - --cache=$cache
+					    - --cache-ttl=1h
+					    - --destination={{ image }}
+					    - --insecure
+					    - --context=/mnt
+					    - --dockerfile=/cloud/build/{{ name }}/Dockerfile
+					    - --build-arg=RAILS_ENV={{ cloud_env }}
+					    volumeMounts:
+					    - name: mnt
+					      mountPath: /mnt
+					  volumes:
+					  - name: mnt
+					    hostPath:
+					      path: {{ app_path }}
+				YML
 			fi
 		done <<< "$paths"
 	;;
@@ -792,6 +792,9 @@ cloud_set_paths() {
 	cloud_docker_path=$cloud_apply_path/docker.yml
 	cloud_volume_path=$cloud_apply_path/volume.yml
 	cloud_claim_path=$cloud_apply_path/claim.yml
+	cloud_ingress_path=$cloud_apply_path/ingress.yml
+	cloud_registry_path=$cloud_apply_path/registry.yml
+	cloud_balancers_path=$cloud_apply_path/balancers.yml
 	cloud_aws_path=$cloud_apply_path/aws.yml
 	cloud_namespace_path=$cloud_apply_path/namespace.yml
 	cloud_kustomization_path=$cloud_apply_path/kustomization.yml
@@ -799,6 +802,10 @@ cloud_set_paths() {
 	cloud_deploy_path=$cloud_path/deploy
 	cloud_snippets_path=$cloud_deploy_path/snippets
 	cloud_samples_path=$cloud_tmp_path/samples
+	cloud_relative_path=/
+	if [ $cloud_context = local ]; then
+		cloud_relative_path+=$cloud_id
+	fi
 	cloud_sample_paths=(
 		config/puma.rb
 		config/database.yml
@@ -1160,62 +1167,6 @@ cloud_config() {
 	if [ -z "$cloud_kubeconfig" ]; then
 		vm_kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
 	fi
-	cat <<-YML | vm_kubectl apply -f -
-		apiVersion: v1
-		kind: PersistentVolumeClaim
-		metadata:
-		  name: registry
-		  labels:
-		    name: registry
-		spec:
-		  storageClassName: $cloud_storage_class
-		  accessModes:
-		  - ReadWriteOnce
-		  resources:
-		    requests:
-		      storage: 1Gi
-		---
-		apiVersion: v1
-		kind: Service
-		metadata:
-		  name: registry
-		  labels:
-		    name: registry
-		spec:
-		  type: NodePort
-		  selector:
-		    name: registry
-		  ports:
-		  - name: registry
-		    port: 5000
-		    nodePort: 32000
-		---
-		apiVersion: apps/v1
-		kind: Deployment
-		metadata:
-		  name:  registry
-		  labels:
-		    name: registry
-		spec:
-		  selector:
-		    matchLabels:
-		      name: registry
-		  template:
-		    metadata:
-		      labels:
-		        name: registry
-		    spec:
-		      containers:
-		      - image: registry:2
-		        name: redis
-		        volumeMounts:
-		        - mountPath: /var/lib/registry
-		          name: registry
-		      volumes:
-		      - name: registry
-		        persistentVolumeClaim:
-		          claimName: registry
-	YML
 }
 
 cloud_help() {

@@ -6,5 +6,3 @@ cloud vm exec -- qemu-img convert -f qcow2 -O raw install.img disk.img
 dd if=/dev/zero bs=1g count=20 >> disk.img
 
 cloud vm exec -- cloud-localds seed.img cloud-init.yml
-
-cloud vm stop

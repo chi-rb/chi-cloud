@@ -7,6 +7,7 @@ growpart:
 package_update: true
 packages:
 - nfs-common
+- unzip
 write_files:
 - path: /etc/profile.d/editor.sh
   owner: root:root
@@ -23,11 +24,16 @@ write_files:
     curl -sfL https://get.k3s.io | sh -
     cat <<-EOF >> /etc/rancher/k3s/registries.yaml
       mirrors:
-        "cloud:32000":
+        "registry:5000":
           endpoint:
-          - "http://cloud:32000"
+          - "http://registry:5000"
     EOF
     service k3s restart
+
+    curl 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o 'awscliv2.zip'
+    unzip awscliv2.zip
+    sudo ./aws/install
+    rm -rf awscliv2.zip awscliv2 aws
 
     sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
