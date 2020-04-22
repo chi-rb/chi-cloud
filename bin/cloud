@@ -359,12 +359,12 @@ compile_tpls() {
 		export "${name}_host=$pod_name"
 		export "${name}_name=$pod_name"
 		if [ -f "$cloud_build_path/$name/Dockerfile" ]; then
-			if [ $cloud_context = local ]; then
-				host=registry:5000
+			if [ $cloud_context = local ] || [ ! -z "$cloud_kubeconfig" ]; then
+				host=localhost:5000
 			else
 				host=registry.$cloud_host
 			fi
-			export "${name}_image=$host/$cloud_env/$name"
+			export "${name}_image=$host/$name"
 		fi
 	done
 	for i in ${!paths[@]}; do
@@ -628,6 +628,10 @@ cloud_boot() {
 	. "$cloud_base_path"
 	. "$cloud_env_path"
 	cloud_id=$cloud_name-$cloud_env
+	cloud_relative_path=/
+	if [ $cloud_context = local ]; then
+		cloud_relative_path+=$cloud_id
+	fi
 	cloud_pull=Always
 	if [ ! -z $cloud_provider ]; then
 		cloud_access_mode=${cloud_access_mode:-ReadWriteMany}
@@ -803,10 +807,6 @@ cloud_set_paths() {
 	cloud_deploy_path=$cloud_path/deploy
 	cloud_snippets_path=$cloud_deploy_path/snippets
 	cloud_samples_path=$cloud_tmp_path/samples
-	cloud_relative_path=/
-	if [ $cloud_context = local ]; then
-		cloud_relative_path+=$cloud_id
-	fi
 	cloud_sample_paths=(
 		config/puma.rb
 		config/database.yml
