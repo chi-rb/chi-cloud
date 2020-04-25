@@ -19,14 +19,12 @@ write_files:
   permissions: '0755'
   content: |
     #!/bin/sh
-    apt autoremove -y
-
     curl -sfL https://get.k3s.io | sh -
     cat <<-EOF >> /etc/rancher/k3s/registries.yaml
       mirrors:
-        "registry:5000":
+        "cloud:5000":
           endpoint:
-          - "http://registry:5000"
+          - "http://cloud:5000"
     EOF
     service k3s restart
 
@@ -34,6 +32,7 @@ write_files:
     unzip awscliv2.zip
     sudo ./aws/install
     rm -rf awscliv2.zip awscliv2 aws
+    apt remove -y unzip
 
     sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
@@ -43,6 +42,8 @@ write_files:
 
     passwd -d root
     touch /root/.hushlogin
+
+    apt autoremove -y
 
     k3s-killall.sh
     systemctl stop \
