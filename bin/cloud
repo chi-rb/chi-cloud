@@ -417,6 +417,22 @@ compile_statics() {
 	fi
 	cat <<-YML > "$cloud_data_path"
 		apiVersion: v1
+		kind: PersistentVolume
+		metadata:
+		  name: $cloud_id
+		spec:
+		  capacity:
+		    storage: 1Gi
+		  volumeMode: Filesystem
+		  accessModes:
+		  - $cloud_access_mode
+		  persistentVolumeReclaimPolicy: Retain
+		  storageClassName: efs-sc
+		  csi:
+		    driver: efs.csi.aws.com
+		    volumeHandle: $aws_file_system_id
+		---
+		apiVersion: v1
 		kind: PersistentVolumeClaim
 		metadata:
 		  name: data
@@ -1381,19 +1397,35 @@ vm_shell() {
 }
 
 vm_ssh() {
+	cmd=$(cat <<-SSH
+		ssh -tq
+		-o ConnectTimeout=10
+		-o ControlMaster=auto
+		-o ControlPersist=600
+		-o ControlPath=/tmp/%r@%h
+		-o UserKnownHostsFile=/dev/null
+		-o StrictHostKeyChecking=no
+		$vm_user@$vm_name
+	SSH
+	)
+	case $PWD in
+	$HOME*)
+		path=$PWD
+	;;
+	*)
+		path=/root
+	;;
+	esac
 	if [ $# -gt 0 ]; then
-		cmd="sh -c '$@'"
+		$cmd sh -c \'cd \"$path\"\; $@\'
 	elif [ ! -t 0 ]; then
-		cmd=sh
+		$cmd sh <<-SSH
+			cd "$path"
+			$(cat -)
+		SSH
+	else
+		$cmd
 	fi
-	ssh -tq \
-	-o 'ConnectTimeout=10' \
-	-o 'ControlMaster=auto' \
-	-o 'ControlPersist=600' \
-	-o 'ControlPath=/tmp/%r@%h' \
-	-o 'UserKnownHostsFile=/dev/null' \
-	-o 'StrictHostKeyChecking=no' \
-	$vm_user@$vm_name $cmd
 }
 
 vm_kubectl() {
@@ -1595,17 +1627,7 @@ vm_exec() {
 	else
 		error Wrong format
 	fi
-	case $PWD in
-	$HOME*)
-		vm_ssh <<-SSH
-			cd "$PWD"
-			$@
-		SSH
-	;;
-	*)
-		vm_ssh $@
-	;;
-	esac
+	vm_ssh $@
 }
 
 vm_update_packages() {
