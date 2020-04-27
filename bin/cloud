@@ -360,11 +360,7 @@ compile_tpls() {
 		export "${name}_name=$pod_name"
 		if [ -f "$cloud_build_path/$name/Dockerfile" ]; then
 			if [ $cloud_context = local ]; then
-				if [ $1 = build ]; then
-					host=localhost:32000
-				else
-					host=cloud:32000
-				fi
+				host=cloud:32000
 			else
 				host=registry.$cloud_host
 			fi
@@ -1132,9 +1128,9 @@ cloud_config() {
 		apiVersion: v1
 		kind: PersistentVolumeClaim
 		metadata:
-		  name: data
+		  name: registry
 		  labels:
-		    name: data
+		    name: registry
 		spec:
 		  storageClassName: $cloud_storage_class
 		  accessModes:
