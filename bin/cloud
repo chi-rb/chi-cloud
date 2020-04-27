@@ -236,6 +236,22 @@ update_nfsd() {
 	sudo $nfsd_path update
 }
 
+normalize_path() {
+	if [ $(echo $1 | grep :) ]; then
+		host=$(echo $1 | cut -d ':' -f 1)
+		pod=$(cloud_find_pod $host)
+		path=$(echo $1 | cut -d ':' -f 2)
+	else
+		pod=
+		path=$1
+	fi
+	if [ ! -z $pod ] && [ ! -z $path ]; then
+		echo $pod:$path
+	else
+		echo $path
+	fi
+}
+
 # XHYVE
 
 xhyve_ensure() {
@@ -932,8 +948,9 @@ cloud_bin() {
 
 cloud_copy() {
 	cloud_load
-	name=$(cloud_find_pod $1)
-	cloud_kubectl cp $2 $name:$3
+	from=$(normalize_path $1)
+	to=$(normalize_path $2)
+	cloud_kubectl cp $from $to
 }
 
 cloud_delete_namespace() {
