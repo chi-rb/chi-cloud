@@ -359,8 +359,8 @@ compile_tpls() {
 		export "${name}_host=$pod_name"
 		export "${name}_name=$pod_name"
 		if [ -f "$cloud_build_path/$name/Dockerfile" ]; then
-			if [ $cloud_context = local ] || [ ! -z "$cloud_kubeconfig" ]; then
-				host=localhost:5000
+			if [ $cloud_context = local ]; then
+				host=cloud:5000
 			else
 				host=registry.$cloud_host
 			fi
@@ -378,78 +378,23 @@ compile_tpls() {
 }
 
 compile_statics() {
-	if [ $cloud_context = local ]; then
+	if [ -z "$cloud_kubeconfig" ]; then
 		cat <<-YML > "$cloud_ingress_path"
 			apiVersion: networking.k8s.io/v1beta1
 			kind: Ingress
 			metadata:
 			  name: ingress
 			  annotations:
-			    kubernetes.io/ingress.class: "traefik"
+			    kubernetes.io/ingress.class: traefik
 			    traefik.ingress.kubernetes.io/rewrite-target: /
 			spec:
 			  rules:
 			  - http:
-			      paths:
-			      - path: $cloud_relative_path
-			        backend:
-			          serviceName: rails
-			          servicePort: 80
-		YML
-	else
-		case $cloud_provider in
-		aws)
-			if [ ! -z "$cloud_kubeconfig" ]; then
-				cat <<-YML > "$cloud_volume_path"
-					apiVersion: v1
-					kind: PersistentVolume
-					metadata:
-					  name: $cloud_id
-					spec:
-					  capacity:
-					    storage: 1Gi
-					  volumeMode: Filesystem
-					  accessModes:
-					  - $cloud_access_mode
-					  persistentVolumeReclaimPolicy: Retain
-					  storageClassName: efs-sc
-					  csi:
-					    driver: efs.csi.aws.com
-					    volumeHandle: $aws_file_system_id
-				YML
-			fi
-		;;
-		esac
-		cat <<-YML > "$cloud_balancers_path"
-			apiVersion: v1
-			kind: Service
-			metadata:
-			  name: nginx-public
-			  labels:
-			    name: nginx-public
-			spec:
-			  type: LoadBalancer
-			  selector:
-			    name: nginx
-			  ports:
-			  - name: nginx-public
-			    port: 80
-			    targetPort: 80
-			---
-			apiVersion: v1
-			kind: Service
-			metadata:
-			  name: registry-public
-			  labels:
-			    name: registry-public
-			spec:
-			  type: LoadBalancer
-			  selector:
-			    name: registry
-			  ports:
-			  - name: registry-public
-			    port: 80
-			    targetPort: 5000
+			    paths:
+			    - path: $cloud_relative_path
+			      backend:
+			        serviceName: rails
+			        servicePort: 80
 		YML
 	fi
 	cat <<-YML > "$cloud_namespace_path"
@@ -459,63 +404,6 @@ compile_statics() {
 		  name: $cloud_id
 		  labels:
 		    name: $cloud_id
-	YML
-	cat <<-YML > "$cloud_claim_path"
-		apiVersion: v1
-		kind: PersistentVolumeClaim
-		metadata:
-		  name: data
-		  labels:
-		    name: data
-		spec:
-		  storageClassName: $cloud_storage_class
-		  accessModes:
-		  - $cloud_access_mode
-		  resources:
-		    requests:
-		      storage: 1Gi
-	YML
-	cat <<-YML > "$cloud_registry_path"
-		apiVersion: v1
-		kind: Service
-		metadata:
-		  name: registry
-		  labels:
-		    name: registry
-		spec:
-		  selector:
-		    name: registry
-		  ports:
-		  - name: registry
-		    port: 5000
-		    nodePort: null
-		---
-		apiVersion: apps/v1
-		kind: Deployment
-		metadata:
-		  name:  registry
-		  labels:
-		    name: registry
-		spec:
-		  selector:
-		    matchLabels:
-		      name: registry
-		  template:
-		    metadata:
-		      labels:
-		        name: registry
-		    spec:
-		      containers:
-		      - image: registry:2
-		        name: redis
-		        volumeMounts:
-		        - mountPath: /var/lib/registry
-		          name: data
-		          subPath: registry
-		      volumes:
-		      - name: data
-		        persistentVolumeClaim:
-		          claimName: data
 	YML
 	namespaces=$(find "$cloud_apply_path" -type d -mindepth 1 -maxdepth 1 | xargs basename)
 	resources=$(ls "$cloud_apply_path" | sed 's/^/  - /g')
@@ -560,8 +448,6 @@ compile() {
 					  - image: gcr.io/kaniko-project/executor:latest
 					    name: kaniko
 					    args:
-					    - --cache=$cache
-					    - --cache-ttl=1h
 					    - --destination={{ image }}
 					    - --insecure
 					    - --context=/mnt
@@ -585,8 +471,8 @@ compile() {
 		done <<< "$paths"
 	;;
 	esac
-	compile_tpls
-	compile_statics
+	compile_tpls $1
+	compile_statics $1
 }
 
 # CLOUD 
@@ -616,7 +502,7 @@ cloud_dir_exists() {
 
 cloud_load() {
 	xhyve_ensure
-	cloud_set_paths
+	cloud_set_vars
 	cloud_ensure_dir
 	cloud_ensure_context
 	cloud_ensure_env
@@ -631,10 +517,7 @@ cloud_boot() {
 	cloud_relative_path=/
 	if [ $cloud_context = local ]; then
 		cloud_relative_path+=$cloud_id
-	fi
-	cloud_pull=Always
-	if [ ! -z $cloud_provider ]; then
-		cloud_access_mode=${cloud_access_mode:-ReadWriteMany}
+	else
 		case $cloud_provider in
 		rancher)
 			cloud_storage_class=local-path
@@ -697,9 +580,6 @@ cloud_boot() {
 			)
 		;;
 		esac
-	else
-		cloud_access_mode=ReadWriteOnce
-		cloud_storage_class=local-path
 	fi
 }
 
@@ -737,15 +617,20 @@ cloud_choose_name() {
 	fi
 }
 
-cloud_choose_port() {
-	if [ -z $rails_cluster_port ]; then
-		echo "Enter port: \c"
-		read	rails_cluster_port
-		add_conf "$cloud_env_path" rails_cluster_port
+cloud_set_globals() {
+	if [ -z $cloud_context ]; then
+		cloud_context=${CLOUD_CONTEXT:-local}
+	fi
+	cloud_pull=Always
+	if [ $cloud_context = local ]; then
+		cloud_access_mode=ReadWriteOnce
+		cloud_storage_class=local-path
+	else
+		cloud_access_mode=ReadWriteMany
 	fi
 }
 
-cloud_set_paths() {
+cloud_set_vars() {
 	while getopts 'c:e:' o; do
 		case "$o" in
 		c)
@@ -756,9 +641,7 @@ cloud_set_paths() {
 		;;
 		esac
 	done
-	if [ -z $cloud_context ]; then
-		cloud_context=${CLOUD_CONTEXT:-local}
-	fi
+	cloud_set_globals
 	if [ -z $cloud_env ]; then
 		if [ -z $RAILS_ENV ]; then
 			if [ $cloud_context != local ]; then
@@ -794,14 +677,8 @@ cloud_set_paths() {
 	cloud_kubeconfig_path=$cloud_tmp_path/kubeconfig
 	cloud_compile_path=$cloud_tmp_path/compile
 	cloud_apply_path=$cloud_tmp_path/apply
-	cloud_docker_path=$cloud_apply_path/docker.yml
-	cloud_volume_path=$cloud_apply_path/volume.yml
-	cloud_claim_path=$cloud_apply_path/claim.yml
 	cloud_ingress_path=$cloud_apply_path/ingress.yml
-	cloud_registry_path=$cloud_apply_path/registry.yml
-	cloud_balancers_path=$cloud_apply_path/balancers.yml
-	cloud_aws_path=$cloud_apply_path/aws.yml
-	cloud_namespace_path=$cloud_apply_path/namespace.yml
+	cloud_namespace_path=$cloud_apply_path/namespaces.yml
 	cloud_kustomization_path=$cloud_apply_path/kustomization.yml
 	cloud_build_path=$cloud_path/build
 	cloud_deploy_path=$cloud_path/deploy
@@ -879,6 +756,7 @@ cloud_install() {
 	cloud_authorize_nfsd
 	cloud_authorize_xhyve
 	vm_install nested
+	cloud_set_globals
 	cloud_config
 	cloud_update_rc
 	complete
@@ -972,7 +850,6 @@ cloud_choose_settings() {
 	begin Choosing Settings
 	if [ -z $cloud_name ] || [ -z $rails_cluster_port ] || [ -z $cloud_provider ]; then
 		cloud_choose_name
-		cloud_choose_port
 	else
 		echo Already setted
 	fi
@@ -1165,9 +1042,127 @@ cloud_log() {
 }
 
 cloud_config() {
-	if [ -z "$cloud_kubeconfig" ]; then
+	if [ $cloud_context = local ]; then
 		vm_kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
+		cat <<-YML | vm_kubectl apply -f -
+			apiVersion: v1
+			kind: Service
+			metadata:
+			  name: registry
+			  labels:
+			    name: registry
+			spec:
+			  type: NodePort
+			  selector:
+			    name: registry
+			  ports:
+			  - name: registry
+			    port: 5000
+			    nodePort: 32000
+		YML
+	else
+		case $cloud_provider in
+		aws)
+			vm_kubectl apply -k github.com/kubernetes-sigs/aws-efs-csi-driver/deploy/kubernetes/overlays/stable/?ref=master
+			cat <<-YML | vm_kubectl apply -f -
+			  kind: StorageClass
+			  apiVersion: storage.k8s.io/v1
+			  metadata:
+			    name: efs-sc
+			  provisioner: efs.csi.aws.com
+				---
+				apiVersion: v1
+				kind: PersistentVolume
+				metadata:
+				  name: $cloud_id
+				spec:
+				  capacity:
+				    storage: 1Gi
+				  volumeMode: Filesystem
+				  accessModes:
+				  - $cloud_access_mode
+				  persistentVolumeReclaimPolicy: Retain
+				  storageClassName: efs-sc
+				  csi:
+				    driver: efs.csi.aws.com
+				    volumeHandle: $aws_file_system_id
+				---
+				apiVersion: v1
+				kind: PersistentVolume
+				metadata:
+				  name: registry
+				spec:
+				  capacity:
+				    storage: 1Gi
+				  volumeMode: Filesystem
+				  accessModes:
+				  - $cloud_access_mode
+				  persistentVolumeReclaimPolicy: Retain
+				  storageClassName: efs-sc
+				  csi:
+				    driver: efs.csi.aws.com
+				    volumeHandle: $aws_file_system_id
+			YML
+		;;
+		esac
+		cat <<-YML | vm_kubectl apply -f -
+			apiVersion: v1
+			kind: Service
+			metadata:
+			  name: registry
+			  labels:
+			    name: registry
+			spec:
+			  type: LoadBalancer
+			  selector:
+			    name: registry
+			  ports:
+			  - name: registry
+			    port: 80
+			    targetPort: 5000
+		YML
 	fi
+	cat <<-YML | vm_kubectl apply -f -
+		apiVersion: v1
+		kind: PersistentVolumeClaim
+		metadata:
+		  name: data
+		  labels:
+		    name: data
+		spec:
+		  storageClassName: $cloud_storage_class
+		  accessModes:
+		  - $cloud_access_mode
+		  resources:
+		    requests:
+		      storage: 1Gi
+		---
+		apiVersion: apps/v1
+		kind: Deployment
+		metadata:
+		  name:  registry
+		  labels:
+		    name: registry
+		spec:
+		  selector:
+		    matchLabels:
+		      name: registry
+		  template:
+		    metadata:
+		      labels:
+		        name: registry
+		    spec:
+		      containers:
+		      - image: registry:2
+		        name: redis
+		        volumeMounts:
+		        - mountPath: /var/lib/registry
+		          name: registry
+		      volumes:
+		      - name: registry
+		        persistentVolumeClaim:
+		          claimName: registry
+	YML
 }
 
 cloud_help() {
@@ -1920,23 +1915,6 @@ aws_nodegroup_status() {
 	read_json status
 }
 
-aws_install_efs_csi() {
-	begin Installing EFS CSI
-	if [ -z $aws_efs_csi ]; then
-		vm_kubectl apply -k "github.com/kubernetes-sigs/aws-efs-csi-driver/deploy/kubernetes/overlays/stable/?ref=master"
-		cat <<-YML | vm_kubectl apply -f -
-			kind: StorageClass
-			apiVersion: storage.k8s.io/v1
-			metadata:
-			  name: efs-sc
-			provisioner: efs.csi.aws.com
-		YML
-		add_conf "$cloud_context_path" aws_efs_csi true
-	else
-		echo Already installed
-	fi
-}
-
 aws_create_cloud() {
 	aws_config
 	aws_create_role
@@ -1950,7 +1928,6 @@ aws_create_cloud() {
 	aws_create_mount_target 2
 	aws_create_cluster
 	aws_create_nodegroup
-	aws_install_efs_csi
 }
 
 if [ -f $user_conf_path ]; then
