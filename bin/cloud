@@ -878,7 +878,7 @@ cloud_generate() {
 	if ! cloud_dir_exists; then
 		cloud_resolve_db
 		shift $((OPTIND-1))
-		cloud_set_paths "$@"
+		cloud_set_vars "$@"
 		cloud_generate_tmp
 		if [ ! -d "$app_path" ]; then
 			cloud_generate_app
@@ -891,7 +891,7 @@ cloud_generate() {
 }
 
 cloud_init() {
-	cloud_set_paths "$@"
+	cloud_set_vars "$@"
 	cloud_generate
 	cloud_choose_settings
 	complete
@@ -908,7 +908,7 @@ cloud_open() {
 }
 
 cloud_bin() {
-	cloud_set_paths
+	cloud_set_vars
 	abs_path=$1
 	target=$(basename $abs_path)
 	if cloud_dir_exists; then
@@ -1215,7 +1215,7 @@ cloud_help() {
 # CONTEXTS
 
 contexts_list() {
-	cloud_set_paths
+	cloud_set_vars
 	cloud_ensure_dir
 	list=$(ls -1 "$cloud_contexts_path")
 	if [ -z "$list" ]; then
@@ -1241,7 +1241,7 @@ contexts_choose_provider() {
 
 contexts_add() {
 	xhyve_ensure
-	cloud_set_paths -c $1
+	cloud_set_vars -c $1
 	cloud_ensure_dir
 	if ! cloud_context_exists; then
 		cloud_ensure_env
@@ -1266,7 +1266,7 @@ contexts_add() {
 
 contexts_edit() {
 	xhyve_ensure
-	cloud_set_paths -c $1
+	cloud_set_vars -c $1
 	cloud_ensure_dir
 	cloud_ensure_context
 	cloud_ensure_env
@@ -1283,7 +1283,7 @@ contexts_edit() {
 
 contexts_delete() {
 	xhyve_ensure
-	cloud_set_paths -c $1
+	cloud_set_vars -c $1
 	cloud_ensure_dir
 	cloud_ensure_context
 	cloud_ensure_env
@@ -1301,7 +1301,7 @@ contexts_delete() {
 # ENVS
 
 envs_list() {
-	cloud_set_paths
+	cloud_set_vars
 	cloud_ensure_dir
 	list=$(ls -1 "$cloud_envs_path")
 	if [ -z "$list" ]; then
@@ -1312,7 +1312,7 @@ envs_list() {
 }
 
 envs_add() {
-	cloud_set_paths -e $1
+	cloud_set_vars -e $1
 	cloud_ensure_dir
 	if ! cloud_env_exists; then
 		begin Adding Environment $1
@@ -1325,7 +1325,7 @@ envs_add() {
 }
 
 envs_edit() {
-	cloud_set_paths -e $1
+	cloud_set_vars -e $1
 	cloud_ensure_dir
 	cloud_ensure_env
 	begin Editing Environment $1
@@ -1334,7 +1334,7 @@ envs_edit() {
 }
 
 envs_delete() {
-	cloud_set_paths -e $1
+	cloud_set_vars -e $1
 	cloud_ensure_dir
 	cloud_ensure_env
 	begin Deleting Environment $1
