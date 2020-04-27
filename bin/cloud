@@ -360,7 +360,7 @@ compile_tpls() {
 		export "${name}_name=$pod_name"
 		if [ -f "$cloud_build_path/$name/Dockerfile" ]; then
 			if [ $cloud_context = local ]; then
-				host=cloud:5000
+				host=cloud:32000
 			else
 				host=registry.$cloud_host
 			fi

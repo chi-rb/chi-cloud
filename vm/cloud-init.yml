@@ -22,9 +22,9 @@ write_files:
     curl -sfL https://get.k3s.io | sh -
     cat <<-EOF >> /etc/rancher/k3s/registries.yaml
       mirrors:
-        "cloud:5000":
+        "cloud:32000":
           endpoint:
-          - "http://cloud:5000"
+          - "http://cloud:32000"
     EOF
     service k3s restart
 
