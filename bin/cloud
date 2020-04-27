@@ -384,17 +384,19 @@ compile_statics() {
 			kind: Ingress
 			metadata:
 			  name: ingress
+			  labels:
+			    name: ingress
 			  annotations:
 			    kubernetes.io/ingress.class: traefik
 			    traefik.ingress.kubernetes.io/rewrite-target: /
 			spec:
 			  rules:
 			  - http:
-			    paths:
-			    - path: $cloud_relative_path
-			      backend:
-			        serviceName: rails
-			        servicePort: 80
+			      paths:
+			      - path: $cloud_relative_path
+			        backend:
+			          serviceName: rails
+			          servicePort: 80
 		YML
 	fi
 	cat <<-YML > "$cloud_namespace_path"
@@ -678,7 +680,7 @@ cloud_set_vars() {
 	cloud_compile_path=$cloud_tmp_path/compile
 	cloud_apply_path=$cloud_tmp_path/apply
 	cloud_ingress_path=$cloud_apply_path/ingress.yml
-	cloud_namespace_path=$cloud_apply_path/namespaces.yml
+	cloud_namespace_path=$cloud_apply_path/namespace.yml
 	cloud_kustomization_path=$cloud_apply_path/kustomization.yml
 	cloud_build_path=$cloud_path/build
 	cloud_deploy_path=$cloud_path/deploy
