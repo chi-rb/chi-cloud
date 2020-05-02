@@ -2022,10 +2022,6 @@ if [ -f $user_conf_path ]; then
 fi
 
 case $1 in
-debug)
-  cloud_set_globals
-  cloud_config
-;;
 install)
 	cloud_install
 ;;
