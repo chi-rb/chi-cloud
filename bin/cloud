@@ -382,7 +382,11 @@ compile_tpls() {
 		export "${name}_name=$pod_name"
 		if [ -f "$cloud_build_path/$name/Dockerfile" ]; then
 			if [ $cloud_context = local ]; then
-				host=cloud:32000
+				if [ $1 = build ]; then
+					host=cloud:32000
+				else
+					host=localhost:32000
+				fi
 			else
 				host=registry.$cloud_host
 			fi
@@ -410,7 +414,6 @@ compile_statics() {
 			    name: ingress
 			  annotations:
 			    kubernetes.io/ingress.class: traefik
-			    traefik.ingress.kubernetes.io/rewrite-target: /
 			spec:
 			  rules:
 			  - http:
