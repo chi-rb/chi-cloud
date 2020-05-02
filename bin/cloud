@@ -386,7 +386,7 @@ compile_tpls() {
 			else
 				host=registry.$cloud_host
 			fi
-			export "${name}_image=$host/$name"
+			export "${name}_image=$host/$cloud_id/$name"
 		fi
 	done
 	for i in ${!paths[@]}; do
