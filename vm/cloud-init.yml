@@ -14,6 +14,31 @@ write_files:
   permissions: '0644'
   content: |
     export EDITOR=vi
+- path: /usr/local/bin/send-ips
+  owner: root:root
+  permissions: '0755'
+  content: |
+    #!/bin/sh
+    vm_ip=$(hostname -I | awk '{ print $1 }')
+    mac_ip=$(echo $vm_ip | cut -d . -f 1-3).1
+
+    cat <<EOF | nc -q 1 $mac_ip 1234
+    vm_ip=$vm_ip
+    mac_ip=$mac_ip
+    EOF
+- path: /lib/systemd/system/send-ips.service
+  owner: root:root
+  permissions: '0644'
+  content: |
+    [Unit]
+    Description=Send Ips.
+
+    [Service]
+    Type=idle
+    ExecStart=/usr/local/bin/send-ips
+
+    [Install]
+    WantedBy=multi-user.target
 - path: /usr/local/bin/pack-img
   owner: root:root
   permissions: '0755'
@@ -44,6 +69,8 @@ write_files:
     touch /root/.hushlogin
 
     apt autoremove -y
+
+    systemctl enable send-ips
 
     k3s-killall.sh
     systemctl stop \

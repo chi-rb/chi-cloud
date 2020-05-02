@@ -1,0 +1,63 @@
+#!/bin/sh
+
+pod_name=$1-$2
+repo_name=$1:$2
+parent_path=$(dirname $0)
+hub_path=$(cd $parent_path && pwd)
+repo_path=$(dirname $hub_path)
+tmp_path=$repo_path/tmp
+auth=$(printf $DOCKER_USER:$DOCKER_PASS | base64)
+context_path=$hub_path/$1/$2
+build_name=build.yml
+build_path=$tmp_path/$build_name
+docker_path=$tmp_path/docker
+config_name=config.json
+config_path=$docker_path/$config_name
+
+rm -rf $tmp_path/*
+mkdir -p $docker_path
+cat <<EOF > $config_path
+{
+	"auths": {
+		"https://index.docker.io/v1/": {
+			"auth": "$auth"
+		}
+	}
+}
+EOF
+cat <<EOF > $build_path
+apiVersion: v1
+kind: Pod
+metadata:
+  name: $pod_name
+  labels:
+    name: $pod_name
+spec:
+  restartPolicy: Never
+  containers:
+  - image: gcr.io/kaniko-project/executor:latest
+    name: kaniko
+    args:
+    - --destination=chirb/$repo_name
+    - --context=/mnt
+    - --dockerfile=/Dockerfile
+    volumeMounts:
+    - name: mnt
+      mountPath: /mnt
+    - name: docker 
+      mountPath: /root/.docker
+  volumes:
+  - name: mnt
+    hostPath:
+      path: $context_path
+  - name: docker
+    hostPath:
+      path: $docker_path
+EOF
+
+cloud vm exec -- "
+kubectl delete pod $pod_name;
+kubectl apply -f $build_path;
+kubectl wait --for condition=Ready --timeout 24h pod/$pod_name;
+kubectl logs -f $pod_name
+"

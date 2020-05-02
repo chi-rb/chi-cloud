@@ -8,7 +8,6 @@ bin_path=/usr/local/bin
 nfsd_path=/sbin/nfsd
 tcc_path=/Library/Application\ Support/com.apple.TCC/TCC.db
 rails_pod=rails
-mac_ip=192.168.64.1
 
 terminal_path=/System/Applications/Utilities/Terminal.app
 terminal_client=com.apple.Terminal
@@ -49,11 +48,14 @@ vm_name=cloud
 vm_mem=4G
 vm_cpus=4
 vm_id=3646C502-7C09-4259-B71D-4B4BB447D6A6
-vm_ip=192.168.64.35
 
 k3s_latest_url=https://github.com/rancher/k3s/releases/latest
 k3s_path=/usr/local/bin/k3s
 
+net_setting_names=(
+	mac_ip
+	vm_ip
+)
 user_setting_names=(
 	vm_mem
 	vm_cpus
@@ -260,7 +262,7 @@ xhyve_ensure() {
 	fi
 }
 
-xhyve_start() {
+xhyve_spawn() {
 	sudo nohup $repo_xhyve_path \
 	-U $vm_id \
 	-A \
@@ -272,15 +274,19 @@ xhyve_start() {
 	-f "kexec,$repo_vmlinuz_path,$repo_initrd_path,root=/dev/vda1 ro" \
 	&>/dev/null &
 	echo $! > $user_pid_path
+}
+
+xhyve_start() {
+	xhyve_spawn
 	xhyve_wait_k8s $@
 }
 
-xhyve_booting() {
+xhyve_starting() {
 	! $(vm_ssh kubectl get pods >/dev/null 2>&1)
 }
 
 xhyve_wait_k8s() {
-	while xhyve_booting; do
+	while xhyve_starting; do
 		if [ "$1" != silent ]; then
 			printf .
 		fi
@@ -1406,7 +1412,7 @@ vm_shell() {
 }
 
 vm_ssh() {
-	cmd=$(cat <<-SSH
+	ssh=$(cat <<-SSH
 		ssh -tq
 		-o ConnectTimeout=10
 		-o ControlMaster=auto
@@ -1417,34 +1423,33 @@ vm_ssh() {
 		$vm_user@$vm_name
 	SSH
 	)
-	case $PWD in
-	$HOME*)
-		path=$PWD
-	;;
-	*)
-		path=/root
-	;;
-	esac
-	if [ $# -gt 0 ]; then
-		$cmd sh -c \'cd \"$path\"\; $@\'
-	elif [ ! -t 0 ]; then
-		$cmd sh <<-SSH
-			cd "$path"
-			$(cat -)
-		SSH
+	if [ $# -gt 0 ] || [ ! -t 0 ]; then
+		case $PWD in
+		$HOME*)
+			cd="cd '$PWD' >/dev/null 2>&1"
+		;;
+		esac
+		if [ $# -gt 0 ]; then
+			$ssh sh -c "$cd; $@"
+		else
+			$ssh sh <<-SSH
+				$cd
+				$(cat -)
+			SSH
+		fi
 	else
-		$cmd
+		$ssh
 	fi
 }
 
 vm_kubectl() {
+	kubectl='vm_ssh kubectl'
 	if [ ! -z "$cloud_kubeconfig" ]; then
 		echo "$cloud_kubeconfig" > $cloud_kubeconfig_path
-		cmd="--kubeconfig \"$cloud_kubeconfig_path\" $@"
+		$kubectl --kubeconfig \"$cloud_kubeconfig_path\" $@
 	else
-		cmd=$@
+		$kubectl $@
 	fi
-	vm_ssh kubectl $cmd
 }
 
 vm_download() {
@@ -1465,15 +1470,6 @@ vm_create_disk() {
 		tar xJvf $repo_disk_path -C $user_cloud_path
 	else
 		echo Already created
-	fi
-}
-
-vm_add_host() {
-	begin Adding Hostname
-	if ! host_exists; then
-		echo $vm_ip $vm_name | sudo tee -a $hosts_path
-	else
-		echo Already added
 	fi
 }
 
@@ -1502,12 +1498,37 @@ vm_init() {
 	fi
 }
 
+vm_add_host() {
+	echo $vm_ip $vm_name | sudo tee -a $hosts_path
+}
+
+vm_first_start() {
+	begin First Start
+	if host_exists; then
+		xhyve_ensure
+	else
+		nc -l 1234 > $tmp_conf_path &
+		if xhyve_running; then
+			xhyve_stop
+		fi
+		xhyve_spawn
+		while [ -z "$(cat $tmp_conf_path)" ]; do
+			printf .
+			sleep $wait_count
+		done
+		. $tmp_conf_path
+		cat $tmp_conf_path | add_conf $user_conf_path -
+		rm $tmp_conf_path
+		vm_add_host
+		xhyve_wait_k8s
+	fi
+}
+
 vm_install() {
 	vm_download
 	vm_init
 	vm_create_disk
-	vm_add_host
-	vm_start nested
+	vm_first_start
 	vm_share_home
 	if [ "$1" != nested ]; then
 		complete
@@ -2001,6 +2022,10 @@ if [ -f $user_conf_path ]; then
 fi
 
 case $1 in
+debug)
+  cloud_set_globals
+  cloud_config
+;;
 install)
 	cloud_install
 ;;
