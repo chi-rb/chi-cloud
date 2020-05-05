@@ -92,18 +92,11 @@ wait_for() {
 	echo
 }
 
-ok() {
-	if [ "$beginned" = true ]; then
-		echo Ok
-	fi
-}
-
 complete() {
-	ok
 	if [ "$beginned" = true ]; then
 		echo
 	fi
-	echo Complete
+	echo DONE!
 }
 
 authorize() {
@@ -119,11 +112,10 @@ error() {
 }
 
 begin() {
-	ok
 	if [ "$beginned" = true ]; then
 		echo
 	fi
-	echo "~> $@"
+	echo "---> $@\n"
 	beginned=true
 }
 
@@ -145,6 +137,10 @@ gen_id() {
 	echo $(uuidgen | tr '[:upper:]' '[:lower:]')
 }
 
+normalize_args() {
+	printf "%q " "$@"
+}
+
 edit() {
 	if [ -z $EDITOR ]; then
 		echo Edit $1 to setup environment
@@ -159,6 +155,16 @@ ensure_file() {
 }
 
 add_conf() {
+	local OPTIND
+	sudo=false
+	while getopts ':s:' o; do
+		case "$o" in
+		s)
+			sudo=true
+		;;
+		esac
+	done
+	shift $((OPTIND-1))
 	if [ -f "$1" ]; then
 		if [ $2 = - ]; then
 			conf=$(cat -)
@@ -169,18 +175,58 @@ add_conf() {
 				conf="$2=$3"
 			fi
 		fi
-		echo "$conf" | sudo tee -a "$1" >/dev/null
+		if [ $sudo = true ]; then
+			echo "$conf" | sudo tee -a "$1" >/dev/null
+		else
+			echo "$conf" >> "$1"
+		fi
 	else
 		error "File $1 don't exist"
 	fi
 }
 
-delete_conf() {
+delete_line() {
+	local OPTIND
+	sudo=false
+	while getopts ':s' o; do
+		case "$o" in
+		s)
+			sudo=true
+		;;
+		esac
+	done
+	shift $((OPTIND-1))
 	if [ -f "$1" ]; then
-		sudo sed -i '' "/$2/d" "$1"
+		path=$(normalize_args $1)
+		cmd="sed -i '' /$2/d $path"
+		if [ $sudo = true ]; then
+			sudo $cmd
+		else
+			$cmd
+		fi
 	else
 		error "File $1 don't exist"
 	fi
+}
+
+find_shell_rc() {
+	type=$(dscl . -read ~/ UserShell | cut -d ' ' -f 2)
+	case $type in
+	*/zsh)
+		path=~/.zshrc
+	;;
+	*/bash)
+		path=~/.bashrc
+	;;
+	esac
+	echo $path
+}
+
+gen_init() {
+	cat <<-SH
+		# Cloud
+		eval "\$(/usr/local/cloud/bin/cloud init)"
+	SH
 }
 
 bin_authorized() {
@@ -220,7 +266,7 @@ authorize_bin() {
 		show_file $1
 		echo Press enter once done
 		read
-		if bin_authorized $@; then
+		if bin_authorized "$@"; then
 			break
 		fi
 	done
@@ -278,7 +324,7 @@ xhyve_spawn() {
 
 xhyve_start() {
 	xhyve_spawn
-	xhyve_wait_k8s $@
+	xhyve_wait_k8s "$@"
 }
 
 xhyve_starting() {
@@ -299,7 +345,7 @@ xhyve_wait_k8s() {
 
 xhyve_stop() {
 	vm_exec -- halt
-	xhyve_wait_pid $@
+	xhyve_wait_pid "$@"
 	rm $user_pid_path
 }
 
@@ -553,7 +599,7 @@ cloud_find_pod() {
 cloud_pod_exec() {
 	name=$1
 	shift
-	cloud_kubectl exec -it $name -- $@
+	cloud_kubectl exec -it $name -- "$@"
 }
 
 cloud_dir_exists() {
@@ -795,19 +841,63 @@ cloud_authorize_xhyve() {
 	fi
 }
 
-cloud_update_rc() {
-	begin Prepending PATH
+cloud_add_rc() {
+	begin Adding Shell Settings
 	ruby=$(which ruby)
 	if [ $ruby != $repo_ruby_path ]; then
-		cat <<-DOC
-			Add this into your shell rc file:
-			PATH=/usr/local/cloud/bin:$PATH
+		path=$(find_shell_rc)
+		init=$(gen_init)
+		if [ ! -z $path ]; then
+			cat <<-SH >> $path
 
-			And then:
-			. /shell-rc-path
-		DOC
+				$init
+			SH
+			cat <<-DOC
+				To start using cloud open a new terminal session.
+
+				Or type:
+				. $path
+			DOC
+		else
+			cat <<-DOC
+				Unknown shell type.
+
+				Add this into your shell rc file:
+				--
+				$init
+				--
+
+				And then:
+				. /rc-path
+			DOC
+		fi
 	else
-		echo Already updated	
+		echo Already updated
+	fi
+}
+
+cloud_delete_rc() {
+	begin Deleting Shell Settings
+	ruby=$(which ruby)
+	if [ $ruby != $repo_ruby_path ]; then
+		echo Already deleted
+	else
+		path=$(find_shell_rc)
+		if [ ! -z $path ]; then
+			sed -i '' '/# Cloud/,/cloud init/d' $path
+		else
+			init=$(gen_init)
+			cat <<-DOC
+				Unknown shell type.
+
+				Remove this from your shell rc file:
+				--
+				$init
+				--
+
+				And then open a new terminal.
+			DOC
+		fi
 	fi
 }
 
@@ -819,7 +909,7 @@ cloud_install() {
 	vm_install nested
 	cloud_set_globals
 	cloud_config
-	cloud_update_rc
+	cloud_add_rc
 	complete
 }
 
@@ -845,6 +935,7 @@ cloud_uninstall() {
 	vm_uninstall nested
 	cloud_delete_settings
 	cloud_delete_repo
+	cloud_delete_rc
 	complete
 }
 
@@ -934,6 +1025,10 @@ cloud_generate() {
 }
 
 cloud_init() {
+	echo 'export PATH="/usr/local/cloud/bin:$PATH"'
+}
+
+cloud_create() {
 	cloud_set_vars "$@"
 	cloud_generate
 	cloud_choose_settings
@@ -962,13 +1057,13 @@ cloud_bin() {
 		else
 			cmd=$target
 		fi
-		cloud_exec -- $cmd $@
+		cloud_exec -- $cmd "$@"
 	else
 		alt=$(which -a $target | grep -A 1 $abs_path | tail -n 1)
 		if [ -z "$alt" ]; then
 			error "No alternative found for \`$target\`"
 		else
-			$alt $@
+			$alt "$@"
 		fi
 	fi
 }
@@ -1009,7 +1104,7 @@ cloud_destroy() {
 
 cloud_apply() {
 	begin Applying YAMLs
-	vm_kubectl apply -k \"$cloud_apply_path\"
+	vm_kubectl apply -k "$cloud_apply_path"
 }
 
 cloud_clear_builds() {
@@ -1032,7 +1127,7 @@ cloud_build() {
 		unset cloud_kubeconfig
 	fi
 	cloud_clear_builds
-	compile $@ build
+	compile "$@" build
 	cloud_apply
 	cloud_log_builds
 	complete
@@ -1090,7 +1185,7 @@ cloud_exec() {
 		error Wrong format
 	fi
 	name=$(cloud_find_pod $name)
-	cloud_pod_exec $name $@
+	cloud_pod_exec $name "$@"
 }
 
 cloud_status() {
@@ -1429,11 +1524,13 @@ vm_ssh() {
 	if [ $# -gt 0 ] || [ ! -t 0 ]; then
 		case $PWD in
 		$HOME*)
-			cd="cd '$PWD' >/dev/null 2>&1"
+			path=$(normalize_args "$PWD")
+			cd="cd $path >/dev/null 2>&1"
 		;;
 		esac
 		if [ $# -gt 0 ]; then
-			$ssh sh -c "$cd; $@"
+			cmd=$(normalize_args "$@")
+			$ssh sh -c "$cd; $cmd"
 		else
 			$ssh sh <<-SSH
 				$cd
@@ -1449,9 +1546,9 @@ vm_kubectl() {
 	kubectl='vm_ssh kubectl'
 	if [ ! -z "$cloud_kubeconfig" ]; then
 		echo "$cloud_kubeconfig" > $cloud_kubeconfig_path
-		$kubectl --kubeconfig \"$cloud_kubeconfig_path\" $@
+		$kubectl --kubeconfig "$cloud_kubeconfig_path" "$@"
 	else
-		$kubectl $@
+		$kubectl "$@"
 	fi
 }
 
@@ -1510,6 +1607,7 @@ vm_first_start() {
 	if host_exists; then
 		xhyve_ensure
 	else
+		mkdir -p $tmp_path
 		nc -l 1234 > $tmp_conf_path &
 		if xhyve_running; then
 			xhyve_stop
@@ -1551,7 +1649,7 @@ vm_delete_files() {
 vm_delete_hostname() {
 	begin Deleting Hostname
 	if host_exists; then
-		delete_conf $hosts_path $vm_name
+		delete_line -s $hosts_path $vm_name
 	else
 		echo Not found
 	fi
@@ -1561,7 +1659,7 @@ vm_unshare_home() {
 	begin Unsharing Home Directory
 	if export_exists; then
 		escaped_exports_home_path=$(echo $exports_home_path | sed 's/\//\\\//g')
-		delete_conf $exports_path $escaped_exports_home_path
+		delete_line -s $exports_path $escaped_exports_home_path
 		update_nfsd
 	else
 		echo Not shared
@@ -1607,7 +1705,7 @@ vm_choose_settings() {
 		for i in $indexes; do
 			name=${user_setting_names[$i]}
 			value=${!user_setting_names[$i]}
-			delete_conf $user_conf_path $name
+			delete_line $user_conf_path $name
 			add_conf $user_conf_path $name $value
 		done
 		vm_choose_settings nested
@@ -1660,7 +1758,7 @@ vm_exec() {
 	else
 		error Wrong format
 	fi
-	vm_ssh $@
+	vm_ssh "$@"
 }
 
 vm_update_packages() {
@@ -1722,7 +1820,7 @@ aws() {
 	AWS_SECRET_ACCESS_KEY=$aws_secret_access_key \
 	AWS_DEFAULT_REGION=$aws_region \
 	AWS_PAGER= \
-	aws $@ ||
+	aws "$@" ||
 	exit
 }
 
@@ -2025,6 +2123,9 @@ if [ -f $user_conf_path ]; then
 fi
 
 case $1 in
+debug)
+	cloud_delete_rc
+;;
 install)
 	cloud_install
 ;;
@@ -2035,8 +2136,11 @@ update)
 	cloud_update
 ;;
 init)
+	cloud_init
+;;
+create)
 	shift
-	cloud_init "$@"
+	cloud_create "$@"
 ;;
 open)
 	cloud_open
@@ -2049,14 +2153,14 @@ destroy)
 ;;
 bin)
 	shift 
-	cloud_bin $@
+	cloud_bin "$@"
 ;;
 copy)
 	cloud_copy $2 $3 $4
 ;;
 build)
 	shift
-	cloud_build $@
+	cloud_build "$@"
 ;;
 deploy)
 	cloud_deploy
@@ -2075,7 +2179,7 @@ tunnel)
 ;;
 exec)
 	shift
-	cloud_exec $@
+	cloud_exec "$@"
 ;;
 status)
 	cloud_status $2
@@ -2152,7 +2256,7 @@ vm)
 	;;
 	exec)
 		shift 2
-		vm_exec $@
+		vm_exec "$@"
 	;;
 	update)
 		vm_update
