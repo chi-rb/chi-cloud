@@ -55,9 +55,7 @@ spec:
       path: $docker_path
 EOF
 
-cloud vm exec -- "
-kubectl delete pod $pod_name;
-kubectl apply -f $build_path;
-kubectl wait --for condition=Ready --timeout 24h pod/$pod_name;
-kubectl logs -f $pod_name
-"
+cloud vm exec -- kubectl delete pod $pod_name
+cloud vm exec -- kubectl apply -f $build_path
+cloud vm exec -- kubectl wait --for condition=Ready --timeout 24h pod/$pod_name
+cloud vm exec -- kubectl logs -f $pod_name

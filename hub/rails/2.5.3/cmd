@@ -1,14 +1,14 @@
 #!/bin/sh
 
-if [ "$RAILS_ENV" = production ]; then
-  SECRET_KEY_BASE=0 bin/rails assets:precompile
-fi
-
 bin/bundle config build.nokogiri --use-system-libraries
 if [ "$RAILS_ENV" = production ]; then
   bin/bundle config set without 'development test'
 fi
 bin/bundle install
+
+if [ "$RAILS_ENV" = production ]; then
+  SECRET_KEY_BASE=0 bin/rails assets:precompile
+fi
 
 if [ "$RAILS_ENV" != production ]; then
   bin/spring server >log/spring.log 2>&1 &

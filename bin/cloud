@@ -450,58 +450,60 @@ compile_tpls() {
 }
 
 compile_statics() {
-	if [ -z "$cloud_kubeconfig" ]; then
-		cat <<-YML > "$cloud_ingress_path"
-			apiVersion: networking.k8s.io/v1beta1
-			kind: Ingress
-			metadata:
-			  name: ingress
-			  labels:
-			    name: ingress
-			  annotations:
-			    kubernetes.io/ingress.class: traefik
-			spec:
-			  rules:
-			  - http:
-			      paths:
-			      - path: $cloud_relative_path
-			        backend:
-			          serviceName: rails
-			          servicePort: 80
-		YML
-		cat <<-YML > "$cloud_data_path"
-			apiVersion: v1
-			kind: PersistentVolumeClaim
-			metadata:
-			  name: data
-			  labels:
-			    name: data
-			spec:
-			  storageClassName: $cloud_storage_class
-			  accessModes:
-			  - $cloud_access_mode
-			  resources:
-			    requests:
-			      storage: 1Gi
-		YML
-	else
-		cat <<-YML > "$cloud_data_path"
-			apiVersion: v1
-			kind: PersistentVolume
-			metadata:
-			  name: $cloud_id
-			spec:
-			  capacity:
-			    storage: 1Gi
-			  volumeMode: Filesystem
-			  accessModes:
-			  - $cloud_access_mode
-			  persistentVolumeReclaimPolicy: Retain
-			  storageClassName: efs-sc
-			  csi:
-			    driver: efs.csi.aws.com
-			    volumeHandle: $aws_file_system_id
-		YML
+	if [ $1 != build ]; then
+		if [ -z "$cloud_kubeconfig" ]; then
+			cat <<-YML > "$cloud_ingress_path"
+				apiVersion: networking.k8s.io/v1beta1
+				kind: Ingress
+				metadata:
+				  name: ingress
+				  labels:
+				    name: ingress
+				  annotations:
+				    kubernetes.io/ingress.class: traefik
+				spec:
+				  rules:
+				  - http:
+				      paths:
+				      - path: $cloud_relative_path
+				        backend:
+				          serviceName: rails
+				          servicePort: 80
+			YML
+			cat <<-YML > "$cloud_data_path"
+				apiVersion: v1
+				kind: PersistentVolumeClaim
+				metadata:
+				  name: data
+				  labels:
+				    name: data
+				spec:
+				  storageClassName: $cloud_storage_class
+				  accessModes:
+				  - $cloud_access_mode
+				  resources:
+				    requests:
+				      storage: 1Gi
+			YML
+		else
+			cat <<-YML > "$cloud_data_path"
+				apiVersion: v1
+				kind: PersistentVolume
+				metadata:
+				  name: $cloud_id
+				spec:
+				  capacity:
+				    storage: 1Gi
+				  volumeMode: Filesystem
+				  accessModes:
+				  - $cloud_access_mode
+				  persistentVolumeReclaimPolicy: Retain
+				  storageClassName: efs-sc
+				  csi:
+				    driver: efs.csi.aws.com
+				    volumeHandle: $aws_file_system_id
+			YML
+		fi
 	fi
 	cat <<-YML > "$cloud_namespace_path"
 		apiVersion: v1
