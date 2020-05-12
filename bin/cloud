@@ -119,6 +119,10 @@ begin() {
 	beginned=true
 }
 
+indent() {
+ sed 's/^/    /'
+}
+
 correct() {
 	echo "Correct (Y/n)? \c"
 	read yn
@@ -133,8 +137,16 @@ unknown() {
 	fi
 }
 
+downcase() {
+	tr '[:upper:]' '[:lower:]'
+}
+
 gen_id() {
-	echo $(uuidgen | tr '[:upper:]' '[:lower:]')
+	echo $(uuidgen | downcase)
+}
+
+gen_pass() {
+	echo $(uuidgen | sed 's/-//g' | downcase)
 }
 
 normalize_args() {
@@ -434,7 +446,7 @@ compile_tpls() {
 					host=localhost:32000
 				fi
 			else
-				host=registry.$cloud_host
+				host=$cloud_registry_host
 			fi
 			export "${name}_image=$host/$cloud_id/$name"
 		fi
@@ -470,23 +482,17 @@ compile_statics() {
 				          serviceName: rails
 				          servicePort: 80
 			YML
-			cat <<-YML > "$cloud_data_path"
-				apiVersion: v1
-				kind: PersistentVolumeClaim
-				metadata:
-				  name: data
-				  labels:
-				    name: data
-				spec:
-				  storageClassName: $cloud_storage_class
-				  accessModes:
-				  - $cloud_access_mode
-				  resources:
-				    requests:
-				      storage: 1Gi
-			YML
 		else
-			cat <<-YML > "$cloud_data_path"
+			cat <<-YML > "$cloud_registry_docker_path"
+				apiVersion: v1
+				kind: Secret
+				metadata:
+				  name: registry-docker
+				type: kubernetes.io/dockerconfigjson
+				data:
+				  .dockerconfigjson: $(printf "$cloud_docker_config" | base64)
+			YML
+			cat <<-YML > "$cloud_volume_path"
 				apiVersion: v1
 				kind: PersistentVolume
 				metadata:
@@ -504,7 +510,33 @@ compile_statics() {
 				    volumeHandle: $aws_file_system_id
 			YML
 		fi
+	else
+		cat <<-YML > "$cloud_kaniko_docker_path"
+			apiVersion: v1
+			kind: Secret
+			metadata:
+			  name: kaniko-docker
+			type: Opaque
+			stringData:
+			  config.json: |
+			$(echo "$cloud_docker_config" | indent)
+		YML
 	fi
+	cat <<-YML > "$cloud_data_path"
+		apiVersion: v1
+		kind: PersistentVolumeClaim
+		metadata:
+		  name: data
+		  labels:
+		    name: data
+		spec:
+		  storageClassName: $cloud_storage_class
+		  accessModes:
+		  - $cloud_access_mode
+		  resources:
+		    requests:
+		      storage: 1Gi
+	YML
 	cat <<-YML > "$cloud_namespace_path"
 		apiVersion: v1
 		kind: Namespace
@@ -542,33 +574,67 @@ compile() {
 			name=$(basename "$path" | sed 's/\.yml//')
 			if [ -d "$cloud_build_path/$name" ]; then
 				target_path="$cloud_compile_path/$name.yml"
-				cat <<-YML > "$target_path"
-					apiVersion: v1
-					kind: Pod
-					metadata:
-					  name: {{ name }}-build
-					  labels:
-					    name: {{ name }}-build
-					    type: build
-					spec:
-					  restartPolicy: Never
-					  containers:
-					  - image: gcr.io/kaniko-project/executor:latest
-					    name: kaniko
-					    args:
-					    - --destination={{ image }}
-					    - --insecure
-					    - --context=/mnt
-					    - --dockerfile=/cloud/build/{{ name }}/Dockerfile
-					    - --build-arg=RAILS_ENV={{ cloud_env }}
-					    volumeMounts:
-					    - name: mnt
-					      mountPath: /mnt
-					  volumes:
-					  - name: mnt
-					    hostPath:
-					      path: {{ app_path }}
-				YML
+				if [ $cloud_context = local ]; then
+					cat <<-YML > "$target_path"
+						apiVersion: v1
+						kind: Pod
+						metadata:
+						  name: {{ name }}-build
+						  labels:
+						    name: {{ name }}-build
+						    type: build
+						spec:
+						  restartPolicy: Never
+						  containers:
+						  - image: gcr.io/kaniko-project/executor:latest
+						    name: kaniko
+						    args:
+						    - --destination={{ image }}
+						    - --insecure
+						    - --context=/mnt
+						    - --dockerfile=/cloud/build/{{ name }}/Dockerfile
+						    - --build-arg=RAILS_ENV={{ cloud_env }}
+						    volumeMounts:
+						    - name: mnt
+						      mountPath: /mnt
+						  volumes:
+						  - name: mnt
+						    hostPath:
+						      path: {{ app_path }}
+					YML
+				else
+					cat <<-YML > "$target_path"
+						apiVersion: v1
+						kind: Pod
+						metadata:
+						  name: {{ name }}-build
+						  labels:
+						    name: {{ name }}-build
+						    type: build
+						spec:
+						  restartPolicy: Never
+						  containers:
+						  - image: gcr.io/kaniko-project/executor:latest
+						    name: kaniko
+						    args:
+						    - --destination={{ image }}
+						    - --context=/mnt
+						    - --dockerfile=/cloud/build/{{ name }}/Dockerfile
+						    - --build-arg=RAILS_ENV={{ cloud_env }}
+						    volumeMounts:
+						    - name: mnt
+						      mountPath: /mnt
+						    - name: docker
+						      mountPath: /kaniko/.docker
+						  volumes:
+						  - name: mnt
+						    hostPath:
+						      path: {{ app_path }}
+						  - name: docker
+						    secret:
+						      secretName: kaniko-docker
+					YML
+				fi
 			fi
 		done <<< "$paths"
 	;;
@@ -626,29 +692,18 @@ cloud_boot() {
 	if [ $cloud_context = local ]; then
 		cloud_relative_path+=$cloud_id
 	else
+		cloud_registry_host=registry.$cloud_host
+		cloud_docker_config=$(cat <<-JSON
+				{
+				  "auths": {
+				    "https://$cloud_registry_host/v2/": {
+				      "auth": "$(printf $cloud_registry_user:$cloud_registry_pass | base64)"
+				    }
+				  }
+				}
+			JSON
+		)
 		case $cloud_provider in
-		rancher)
-			cloud_storage_class=local-path
-			cloud_kubeconfig=$(cat <<-YML
-				apiVersion: v1
-				kind: Config
-				clusters:
-				- name: kubernetes
-				  cluster:
-				    server: $rancher_endpoint
-				users:
-				- name: rancher
-				  user:
-				    token: $rancher_token
-				contexts:
-				- name: kubernetes
-				  context:
-				    user: rancher
-				    cluster: kubernetes
-				current-context: kubernetes
-			YML
-			)
-		;;
 		aws)
 			cloud_storage_class=efs-sc
 			cloud_kubeconfig=$(cat <<-YML
@@ -735,6 +790,7 @@ cloud_set_globals() {
 		cloud_storage_class=local-path
 	else
 		cloud_access_mode=ReadWriteMany
+		cloud_pull_secret=registry-docker
 	fi
 }
 
@@ -772,6 +828,7 @@ cloud_set_vars() {
 		app_path=$PWD
 	fi
 	cloud_path=$app_path/cloud
+	cloud_cert_path=$cloud_path/cert
 	cloud_kube_path=$cloud_path/kube
 	cloud_contexts_path=$cloud_path/contexts
 	cloud_local_path=$cloud_contexts_path/local
@@ -786,8 +843,11 @@ cloud_set_vars() {
 	cloud_compile_path=$cloud_tmp_path/compile
 	cloud_apply_path=$cloud_tmp_path/apply
 	cloud_ingress_path=$cloud_apply_path/ingress.yml
+	cloud_kaniko_docker_path=$cloud_apply_path/kaniko-docker.yml
+	cloud_registry_docker_path=$cloud_apply_path/registry-docker.yml
 	cloud_namespace_path=$cloud_apply_path/namespace.yml
 	cloud_data_path=$cloud_apply_path/data.yml
+	cloud_volume_path=$cloud_apply_path/volume.yml
 	cloud_kustomization_path=$cloud_apply_path/kustomization.yml
 	cloud_build_path=$cloud_path/build
 	cloud_deploy_path=$cloud_path/deploy
@@ -1283,7 +1343,7 @@ cloud_config() {
 			    name: registry
 			  ports:
 			  - name: registry
-			    port: 80
+			    port: 443
 			    targetPort: 5000
 		YML
 	fi
@@ -1301,33 +1361,118 @@ cloud_config() {
 		  resources:
 		    requests:
 		      storage: 1Gi
-		---
-		apiVersion: apps/v1
-		kind: Deployment
-		metadata:
-		  name:  registry
-		  labels:
-		    name: registry
-		spec:
-		  selector:
-		    matchLabels:
-		      name: registry
-		  template:
-		    metadata:
-		      labels:
-		        name: registry
-		    spec:
-		      containers:
-		      - image: registry:2
-		        name: redis
-		        volumeMounts:
-		        - mountPath: /var/lib/registry
-		          name: registry
-		      volumes:
-		      - name: registry
-		        persistentVolumeClaim:
-		          claimName: registry
 	YML
+	if [ $cloud_context != local ] && [ -d $cloud_cert_path ]; then
+		cat <<-YML | vm_kubectl apply -f -
+			apiVersion: v1
+			kind: Secret
+			metadata:
+			  name: cert
+			type: Opaque
+			stringData:
+			  public: |
+			$(cat $cloud_cert_path/public | indent)
+			  private: |
+			$(cat $cloud_cert_path/private | indent)
+		YML
+		#cloud_registry_user=cloud
+		#add_conf "$cloud_context_path" cloud_registry_user
+		#cloud_registry_pass=$(gen_pass)
+		#add_conf "$cloud_context_path" cloud_registry_pass
+		htpasswd=$(htpasswd -Bbn $cloud_registry_user $cloud_registry_pass)
+		cat <<-YML | vm_kubectl apply -f -
+			apiVersion: v1
+			kind: Secret
+			metadata:
+			  name: registry-auth
+			type: Opaque
+			stringData:
+			  htpasswd: |
+			$(echo "$htpasswd" | indent)
+		YML
+		case $cloud_provider in
+		aws)
+			cat <<-YML | vm_kubectl apply -f -
+				apiVersion: apps/v1
+				kind: Deployment
+				metadata:
+				  name:  registry
+				  labels:
+				    name: registry
+				spec:
+				  selector:
+				    matchLabels:
+				      name: registry
+				  template:
+				    metadata:
+				      labels:
+				        name: registry
+				    spec:
+				      containers:
+				      - image: registry:2
+				        name: registry
+				        env:
+				        - name: REGISTRY_HTTP_TLS_CERTIFICATE
+				          value: /cert/public
+				        - name: REGISTRY_HTTP_TLS_KEY
+				          value: /cert/private
+				        - name: REGISTRY_AUTH
+				          value: htpasswd
+				        - name: REGISTRY_AUTH_HTPASSWD_PATH
+				          value: /auth/htpasswd
+				        - name: REGISTRY_AUTH_HTPASSWD_REALM
+				          value: Registry
+				        volumeMounts:
+				        - mountPath: /var/lib/registry
+				          name: registry
+				        - mountPath: /cert
+				          name: cert
+				          readOnly: true
+				        - mountPath: /auth
+				          name: auth
+				          readOnly: true
+				      volumes:
+				      - name: registry
+				        persistentVolumeClaim:
+				          claimName: registry
+				      - name: cert
+				        secret:
+				          secretName: cert
+				      - name: auth
+				        secret:
+				          secretName: registry-auth
+			YML
+		;;
+		esac
+	else
+		cat <<-YML | vm_kubectl apply -f -
+			apiVersion: apps/v1
+			kind: Deployment
+			metadata:
+			  name:  registry
+			  labels:
+			    name: registry
+			spec:
+			  selector:
+			    matchLabels:
+			      name: registry
+			  template:
+			    metadata:
+			      labels:
+			        name: registry
+			    spec:
+			      containers:
+			      - image: registry:2
+			        name: redis
+			        volumeMounts:
+			        - mountPath: /var/lib/registry
+			          name: registry
+			      volumes:
+			      - name: registry
+			        persistentVolumeClaim:
+			          claimName: registry
+		YML
+	fi
 }
 
 cloud_help() {
@@ -1398,9 +1543,6 @@ contexts_add() {
 		contexts_choose_provider
 		cloud_boot
 		case $cloud_provider in
-		rancher)
-			rancher_create_cloud
-		;;
 		aws)
 			aws_create_cloud
 		;;
@@ -1840,7 +1982,8 @@ aws_config() {
 			add_conf "$cloud_context_path" aws_secret_access_key
 		fi
 		if [ -z $aws_region ]; then
-			printf 'Enter region:'
+			echo
+			printf 'Enter region: '
 			read aws_region
 			add_conf "$cloud_context_path" aws_region
 		fi
@@ -1877,7 +2020,7 @@ aws_create_role() {
 		aws_role_arn=$(
 			aws iam create-role \
 			--role-name $cloud_name \
-			--assume-role-policy-document \'$aws_role_policy\' |
+			--assume-role-policy-document "$aws_role_policy" |
 			read_json Arn
 		)
 		add_conf "$cloud_context_path" aws_role_arn
@@ -1967,6 +2110,9 @@ aws_create_subnet() {
 		)
 		echo Waiting to be available
 		wait_for aws_subnet_status available
+		aws ec2 modify-subnet-attribute \
+		--subnet-id $id \
+		--map-public-ip-on-launch
 		export "$name=$id"
 		add_conf "$cloud_context_path" $name
 	else
@@ -2125,9 +2271,6 @@ if [ -f $user_conf_path ]; then
 fi
 
 case $1 in
-debug)
-	cloud_delete_rc
-;;
 install)
 	cloud_install
 ;;
