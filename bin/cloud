@@ -29,7 +29,6 @@ s3_disk_url=$s3_url/disk.img.xz
 repo_path=/usr/local/cloud
 repo_app_path=$repo_path/app
 repo_base_path=$repo_app_path/base
-repo_vm_path=$repo_path/vm
 repo_tmp_path=$repo_path/tmp
 repo_initrd_path=$repo_tmp_path/initrd
 repo_vmlinuz_path=$repo_tmp_path/vmlinuz
@@ -99,7 +98,23 @@ complete() {
 	echo DONE!
 }
 
+read_ini() {
+	local name value group
+	while IFS='=' read name value; do
+		case $name in
+		\[*\])
+			group=$(echo $name | sed 's/\[//' | sed 's/\]//')
+		;;
+		*)
+			if [ ! -z $value ]; then
+				export "${group}_${name}=$value"
+			fi
+		esac
+	done < "$1"
+}
+
 authorize() {
+	local user pass
 	echo "Enter username: \c"
 	read user
 	echo "Enter password: \c"
@@ -124,6 +139,7 @@ indent() {
 }
 
 correct() {
+	local yn
 	echo "Correct (Y/n)? \c"
 	read yn
 	if [ "$yn" = n ]; then
@@ -167,71 +183,82 @@ ensure_file() {
 }
 
 add_conf() {
-	local OPTIND
-	sudo=false
+	local OPTIND o precmd group name conf
 	while getopts ':s:' o; do
 		case "$o" in
 		s)
-			sudo=true
+			$precmd=sudo
 		;;
 		esac
 	done
 	shift $((OPTIND-1))
 	if [ -f "$1" ]; then
-		if [ $2 = - ]; then
-			conf=$(cat -)
+		group=$(echo $2 | cut -d '_' -f 1)
+		name=$(echo $2 | cut -d '_' -f 2-)
+		if [ -z $3 ]; then
+			conf="$name=${!2}"
 		else
-			if [ -z $3 ]; then
-				conf="$2=${!2}"
-			else
-				conf="$2=$3"
-			fi
+			conf="$name=$3"
 		fi
-		if [ $sudo = true ]; then
-			echo "$conf" | sudo tee -a "$1" >/dev/null
-		else
-			echo "$conf" >> "$1"
+		if ! cat "$1" | grep -q "\[$group\]"; then
+			echo "\n[$group]" | $precmd tee -a "$1" >/dev/null
 		fi
+		$precmd sed -i '' $"/\[$group\]/a\\
+		$conf\\
+		" "$1"
+	else
+		error "File $1 don't exist"
+	fi
+}
+
+delete_conf() {
+	local OPTIND o precmd target_group target_name i name value group
+	while getopts ':s' o; do
+		case "$o" in
+		s)
+			precmd=sudo
+		;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if [ -f "$1" ]; then
+		target_group=[$(echo $2 | cut -d '_' -f 1)]
+		target_name=$(echo $2 | cut -d '_' -f 2-)
+		i=1
+		while IFS='=' read name value; do
+			case $name in
+			\[*\])
+				group=$name
+			;;
+			*)
+				if [ ! -z $value ] && [ "$group" = $target_group ] && [ "$name" = $target_name ]; then
+					$precmd sed -i '' "$i,1d" "$1"
+					break
+				fi
+			esac
+			i=$(($i+1))
+		done < "$1"
 	else
 		error "File $1 don't exist"
 	fi
 }
 
 delete_line() {
-	local OPTIND
-	sudo=false
+	local OPTIND o precmd path
 	while getopts ':s' o; do
 		case "$o" in
 		s)
-			sudo=true
+			precmd=sudo
 		;;
 		esac
 	done
 	shift $((OPTIND-1))
 	if [ -f "$1" ]; then
 		path=$(normalize_args $1)
-		cmd="sed -i '' /$2/d $path"
-		if [ $sudo = true ]; then
-			sudo $cmd
-		else
-			$cmd
-		fi
+		$precmd sed -i '' /$2/d $path
 	else
 		error "File $1 don't exist"
 	fi
-}
-
-find_shell_rc() {
-	type=$(dscl . -read ~/ UserShell | cut -d ' ' -f 2)
-	case $type in
-	*/zsh)
-		path=~/.zshrc
-	;;
-	*/bash)
-		path=~/.bashrc
-	;;
-	esac
-	echo $path
 }
 
 gen_init() {
@@ -242,6 +269,7 @@ gen_init() {
 }
 
 bin_authorized() {
+	local client result
 	if [ ! -z $2 ]; then
 		client=$2
 	else
@@ -264,11 +292,16 @@ show_file() {
 	osascript -e 'tell application "Finder"' -e activate -e "reveal POSIX file \"$1\"" -e end tell >/dev/null 2>&1
 }
 
+get_bin_names() {
+	find $repo_bin_path -type f -name '[a-z]*' -exec basename {} \;
+}
+
 open_privacy() {
 	open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 
 }
 
 authorize_bin() {
+	local name
 	while :; do
 		open_privacy
 		name=$(basename $1)
@@ -297,6 +330,7 @@ update_nfsd() {
 }
 
 normalize_path() {
+	local host pod path
 	if [ $(echo $1 | grep :) ]; then
 		host=$(echo $1 | cut -d ':' -f 1)
 		pod=$(cloud_find_pod $host)
@@ -374,6 +408,7 @@ xhyve_wait_pid() {
 }
 
 xhyve_running() {
+	local vim_pid
 	if [ -f $user_pid_path ]; then
 		vm_pid=$(cat $user_pid_path)
 		ps -p $vm_pid >/dev/null 2>&1
@@ -385,6 +420,9 @@ xhyve_running() {
 # COMPILE
 
 compile_tpl() {
+	local \
+	output subs sub sub_args render_path vars var snippet_path \
+	sub_value sub_name cloud_sub_name pod_sub_name target_sub_name
 	output=$(cat "$1")
 	subs=$(grep -o '{{ [a-z_. ]* }}' "$1" | uniq)
 	while read sub; do
@@ -424,6 +462,7 @@ compile_tpl() {
 }
 
 compile_tpls() {
+	local paths names pod_names path i name pod_name host apply_path
 	paths=()
 	names=()
 	pod_names=()
@@ -462,6 +501,7 @@ compile_tpls() {
 }
 
 compile_statics() {
+	local namespaces resources
 	if [ $1 != build ]; then
 		if [ -z "$cloud_kubeconfig" ]; then
 			cat <<-YML > "$cloud_ingress_path"
@@ -555,6 +595,7 @@ compile_statics() {
 }
 
 compile() {
+	local OPTIND OPTARG cache o paths path name target_path
 	begin Compiling YAMLs
 	cache=true
 	while getopts 'c:' o; do
@@ -652,6 +693,7 @@ compile() {
 # CLOUD 
 
 cloud_kubectl() {
+	local cmd
 	cmd=$@
 	if [ ! -z $cloud_id ]; then
 		cmd="--namespace $cloud_id $cmd"
@@ -660,11 +702,13 @@ cloud_kubectl() {
 }
 
 cloud_find_pod() {
+	local name
 	name=${1:-$rails_pod}
 	echo $(cloud_kubectl get pod -l name=$name -o jsonpath={.items[0].metadata.name})
 }
 
 cloud_pod_exec() {
+	local name
 	name=$1
 	shift
 	cloud_kubectl exec -it $name -- "$@"
@@ -684,9 +728,9 @@ cloud_load() {
 }
 
 cloud_boot() {
-	. "$cloud_context_path"
-	. "$cloud_base_path"
-	. "$cloud_env_path"
+	read_ini "$cloud_context_path"
+	read_ini "$cloud_base_path"
+	read_ini "$cloud_env_path"
 	cloud_id=$cloud_name-$cloud_env
 	cloud_relative_path=/
 	if [ $cloud_context = local ]; then
@@ -711,7 +755,7 @@ cloud_boot() {
 				clusters:
 				- cluster:
 				    server: $aws_endpoint
-				    certificate-authority-data: $aws_certificate
+				    certificate-authority-data: $aws_certificate=
 				  name: kubernetes
 				contexts:
 				- context:
@@ -795,6 +839,7 @@ cloud_set_globals() {
 }
 
 cloud_set_vars() {
+	local OPTIND OPTARG o
 	while getopts 'c:e:' o; do
 		case "$o" in
 		c)
@@ -903,64 +948,20 @@ cloud_authorize_xhyve() {
 	fi
 }
 
-cloud_add_rc() {
-	begin Adding Shell Settings
-	ruby=$(which ruby)
-	if [ $ruby != $repo_ruby_path ]; then
-		path=$(find_shell_rc)
-		init=$(gen_init)
-		if [ ! -z $path ]; then
-			cat <<-SH >> $path
-
-				$init
-			SH
-			cat <<-DOC
-				To start using cloud open a new terminal session.
-
-				Or type:
-				. $path
-			DOC
-		else
-			cat <<-DOC
-				Unknown shell type.
-
-				Add this into your shell rc file:
-				--
-				$init
-				--
-
-				And then:
-				. /rc-path
-			DOC
-		fi
-	else
-		echo Already updated
-	fi
+cloud_add_bins() {
+	local name
+	begin Adding Binaries
+	for name in $(get_bin_names); do
+		ln -s $repo_bin_path/$name $bin_path/$name
+	done
 }
 
-cloud_delete_rc() {
-	begin Deleting Shell Settings
-	ruby=$(which ruby)
-	if [ $ruby != $repo_ruby_path ]; then
-		echo Already deleted
-	else
-		path=$(find_shell_rc)
-		if [ ! -z $path ]; then
-			sed -i '' '/# Cloud/,/cloud init/d' $path
-		else
-			init=$(gen_init)
-			cat <<-DOC
-				Unknown shell type.
-
-				Remove this from your shell rc file:
-				--
-				$init
-				--
-
-				And then open a new terminal.
-			DOC
-		fi
-	fi
+cloud_delete_bins() {
+	local name
+	begin Deleting Binaries
+	for name in $(get_bin_names); do
+		rm $bin_path/$name
+	done
 }
 
 cloud_install() {
@@ -971,7 +972,7 @@ cloud_install() {
 	vm_install nested
 	cloud_set_globals
 	cloud_config
-	cloud_add_rc
+	cloud_add_bins
 	complete
 }
 
@@ -996,12 +997,13 @@ cloud_delete_repo() {
 cloud_uninstall() {
 	vm_uninstall nested
 	cloud_delete_settings
+	cloud_delete_bins
 	cloud_delete_repo
-	cloud_delete_rc
 	complete
 }
 
 cloud_update() {
+	local current_path current_branch new_branch
 	begin Updating Script
 	current_path=$PWD
 	cd $repo_path
@@ -1016,6 +1018,7 @@ cloud_update() {
 }
 
 cloud_resolve_db() {
+	local OPTIND OPTARG cloud_db o
 	cloud_db=postgres
 	while getopts 'd:' o; do
 		case "$o" in
@@ -1029,9 +1032,11 @@ cloud_resolve_db() {
 		esac
 	done
 	add_conf "$cloud_base_path" cloud_db
+	shift $((OPTIND-1))
 }
 
 cloud_generate_tmp() {
+	local path_name patch_path
 	mkdir -p $tmp_path
 	rm -rf $tmp_base_path
 	cp -r $repo_base_path $tmp_base_path
@@ -1049,6 +1054,7 @@ cloud_generate_app() {
 }
 
 cloud_generate_dir() {
+	local sample_path destination_path
 	mv $tmp_cloud_path "$cloud_path"
 	mkdir -p "$cloud_samples_path"
 	for sample_path in "${cloud_sample_paths[@]}"; do
@@ -1073,7 +1079,6 @@ cloud_generate() {
 	begin Generating Directory
 	if ! cloud_dir_exists; then
 		cloud_resolve_db
-		shift $((OPTIND-1))
 		cloud_set_vars "$@"
 		cloud_generate_tmp
 		if [ ! -d "$app_path" ]; then
@@ -1098,6 +1103,7 @@ cloud_create() {
 }
 
 cloud_open() {
+	local url
 	cloud_load
 	if [ $cloud_context = local ]; then
 		url=$vm_name/$cloud_id
@@ -1108,6 +1114,7 @@ cloud_open() {
 }
 
 cloud_bin() {
+	local abs_path target real_path cmd alt
 	cloud_set_vars
 	abs_path=$1
 	target=$(basename $abs_path)
@@ -1131,6 +1138,7 @@ cloud_bin() {
 }
 
 cloud_copy() {
+	local from to
 	cloud_load
 	from=$(normalize_path $1)
 	to=$(normalize_path $2)
@@ -1203,6 +1211,7 @@ cloud_deploy() {
 }
 
 cloud_restart() {
+	local cmd
 	cloud_load
 	if [ -z "$cloud_kubeconfig" ]; then
 		cmd='delete pod '
@@ -1218,18 +1227,21 @@ cloud_restart() {
 }
 
 cloud_shell() {
+	local name
 	cloud_load
 	name=$(cloud_find_pod $1)
 	cloud_pod_exec $name /bin/bash
 }
 
 cloud_attach() {
+	local name
 	cloud_load
 	name=$(cloud_find_pod $1)
 	cloud_kubectl attach -it $name
 }
 
 cloud_tunnel() {
+	local port name
 	cloud_load
 	port=$(cloud_kubectl get service $1 --no-headers=true | awk '{ print $5 }' | sed 's/\/.*//')
 	name=$(cloud_find_pod $1)
@@ -1237,6 +1249,7 @@ cloud_tunnel() {
 }
 
 cloud_exec() {
+	local name
 	cloud_load
 	if [ $# -gt 2 ] && [ "$2" = -- ]; then
 		name=$1
@@ -1251,6 +1264,7 @@ cloud_exec() {
 }
 
 cloud_status() {
+	local name
 	cloud_load
 	if [ -z "$1" ]; then
 		cloud_kubectl get pods
@@ -1261,6 +1275,7 @@ cloud_status() {
 }
 
 cloud_log() {
+	local name
 	cloud_load
 	name=$(cloud_find_pod $1)
 	cloud_kubectl logs -f $name
@@ -1375,10 +1390,10 @@ cloud_config() {
 			  private: |
 			$(cat $cloud_cert_path/private | indent)
 		YML
-		#cloud_registry_user=cloud
-		#add_conf "$cloud_context_path" cloud_registry_user
-		#cloud_registry_pass=$(gen_pass)
-		#add_conf "$cloud_context_path" cloud_registry_pass
+		cloud_registry_user=cloud
+		add_conf "$cloud_context_path" cloud_registry_user
+		cloud_registry_pass=$(gen_pass)
+		add_conf "$cloud_context_path" cloud_registry_pass
 		htpasswd=$(htpasswd -Bbn $cloud_registry_user $cloud_registry_pass)
 		cat <<-YML | vm_kubectl apply -f -
 			apiVersion: v1
@@ -1519,6 +1534,7 @@ contexts_list() {
 }
 
 contexts_choose_provider() {
+	local input
 	printf 'Choose provider: AWS (A)? '
 	read input
 	case $input in
@@ -1591,6 +1607,7 @@ contexts_delete() {
 # ENVS
 
 envs_list() {
+	local list
 	cloud_set_vars
 	cloud_ensure_dir
 	list=$(ls -1 "$cloud_envs_path")
@@ -1654,6 +1671,7 @@ vm_shell() {
 }
 
 vm_ssh() {
+	local ssh path cd cmd
 	ssh=$(cat <<-SSH
 		ssh -tq
 		-o ConnectTimeout=10
@@ -1687,6 +1705,7 @@ vm_ssh() {
 }
 
 vm_kubectl() {
+	local kubectl
 	kubectl='vm_ssh kubectl'
 	if [ ! -z "$cloud_kubeconfig" ]; then
 		echo "$cloud_kubeconfig" > $cloud_kubeconfig_path
@@ -1762,7 +1781,8 @@ vm_first_start() {
 			sleep $wait_count
 		done
 		. $tmp_conf_path
-		cat $tmp_conf_path | add_conf $user_conf_path -
+		add_conf $user_conf_path mac_ip
+		add_conf $user_conf_path vm_ip
 		rm $tmp_conf_path
 		vm_add_host
 		xhyve_wait_k8s
@@ -1782,8 +1802,8 @@ vm_install() {
 
 vm_delete_files() {
 	begin Deleting Files
-	if [ -d $repo_vm_path ]; then
-		rm -rf $repo_vm_path
+	if [ -d $repo_tmp_path ]; then
+		rm -rf $repo_tmp_path
 		rm -rf $user_disk_path
 	else
 		echo Not found
@@ -1800,6 +1820,7 @@ vm_delete_hostname() {
 }
 
 vm_unshare_home() {
+	local escaped_exports_home_path
 	begin Unsharing Home Directory
 	if export_exists; then
 		escaped_exports_home_path=$(echo $exports_home_path | sed 's/\//\\\//g')
@@ -1823,6 +1844,7 @@ vm_uninstall() {
 }
 
 vm_choose_settings() {
+	local indexes i desc value name
 	if [ "$1" != nested ]; then
 		begin Choosing Settings
 	fi
@@ -1849,7 +1871,7 @@ vm_choose_settings() {
 		for i in $indexes; do
 			name=${user_setting_names[$i]}
 			value=${!user_setting_names[$i]}
-			delete_line $user_conf_path $name
+			delete_conf $user_conf_path $name
 			add_conf $user_conf_path $name $value
 		done
 		vm_choose_settings nested
@@ -1914,6 +1936,7 @@ vm_update_packages() {
 }
 
 vm_update_k3s() {
+	local regex current_version latest_version url
 	begin Updating K3S
 	regex='v[0-9]+\.[0-9]+\.[0-9]+\+k3s.?[0-9]+'
 	current_version=$(vm_ssh k3s -v | grep -oE $regex)
@@ -1993,6 +2016,7 @@ aws_config() {
 }
 
 aws_create_role() {
+	local aws_role_policy name
 	begin Creating Role
 	if [ -z $aws_role_arn ]; then
 		aws_role_policy=$(cat <<-JSON
@@ -2042,6 +2066,7 @@ aws_create_role() {
 }
 
 aws_create_vpc() {
+	local name
 	begin Creating VPC
 	if [ -z $aws_vpc_id ]; then
 		aws_vpc_id=$(
@@ -2097,6 +2122,7 @@ aws_create_gateway() {
 }
 
 aws_create_subnet() {
+	local name block id
 	begin Creating Subnet$1
 	name=aws_subnet$1_id
 	block=10.0.$1.0
@@ -2127,6 +2153,7 @@ aws_subnet_status() {
 }
 
 aws_create_efs_security_group() {
+	local name
 	begin Creating EFS Security Group
 	if [ -z $aws_efs_security_group_id ]; then
 		name=$cloud_id-efs
@@ -2170,6 +2197,7 @@ aws_file_system_status() {
 }
 
 aws_create_mount_target() {
+	local name subnet_name id
 	begin Creating Mount Target$1
 	name=aws_mount_target$1_id
 	if [ -z ${!name} ]; then
@@ -2197,6 +2225,7 @@ aws_mount_target_status() {
 }
 
 aws_create_cluster() {
+	local json
 	begin Creating Cluster
 	if [ -z $aws_cluster_name ]; then
 		aws_cluster_name=$cloud_id
@@ -2212,7 +2241,7 @@ aws_create_cluster() {
 		json=$(aws eks describe-cluster --name $aws_cluster_name)
 		aws_endpoint=$(echo "$json" | read_json endpoint)
 		add_conf "$cloud_context_path" aws_endpoint
-		aws_certificate=$(echo "$json" | read_json data)
+		aws_certificate=$(echo "$json" | read_json data | sed 's/=//')
 		add_conf "$cloud_context_path" aws_certificate
 	else
 		echo Already created
@@ -2267,7 +2296,7 @@ aws_create_cloud() {
 }
 
 if [ -f $user_conf_path ]; then
-	. $user_conf_path
+	read_ini $user_conf_path
 fi
 
 case $1 in
