@@ -32,9 +32,9 @@ write_files:
   content: |
     [Unit]
     Description=Send Ips.
+    After=network.target
 
     [Service]
-    Type=idle
     ExecStart=/usr/local/bin/send-ips
 
     [Install]
