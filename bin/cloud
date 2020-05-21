@@ -1686,19 +1686,18 @@ vm_ssh() {
 	if [ $# -gt 0 ] || [ ! -t 0 ]; then
 		case $PWD in
 		$HOME*)
-			path=$(normalize_args "$PWD")
-			cd="cd $path >/dev/null 2>&1"
+			cd="cd '$PWD' >/dev/null 2>&1"
 		;;
 		esac
 		if [ $# -gt 0 ]; then
-			cmd=$(normalize_args "$@")
-			$ssh sh -c "$cd; $cmd"
+			cmd=$@
 		else
-			$ssh sh <<-SSH
-				$cd
-				$(cat -)
-			SSH
+			cmd=$(cat -)
 		fi
+		$ssh "
+			$cd
+			$cmd
+		"
 	else
 		$ssh
 	fi
