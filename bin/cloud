@@ -1741,7 +1741,7 @@ vm_share_home() {
 		echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
 		update_nfsd
 		vm_ssh <<-SSH
-			echo "$mac_ip:$exports_home_path\t$HOME\tnfs local_lock=all\t0 0" >> /etc/fstab
+			echo "$mac_ip:$exports_home_path	$HOME	nfs	local_lock=all	0 0" >> /etc/fstab
 			mkdir -p $HOME
 			mount $HOME
 		SSH
