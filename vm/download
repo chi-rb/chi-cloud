@@ -1,7 +1,9 @@
 #!/bin/sh
 
-base_url=https://cloud-images.ubuntu.com/bionic/current
+ubuntu_url=https://cloud-images.ubuntu.com/bionic/current
+s3_url=https://chi-rb.s3.amazonaws.com
 
-curl $base_url/bionic-server-cloudimg-amd64.img > install.img
-curl $base_url/unpacked/bionic-server-cloudimg-amd64-vmlinuz-generic > vmlinuz
-curl $base_url/unpacked/bionic-server-cloudimg-amd64-initrd-generic > initrd
+curl $ubuntu_url/bionic-server-cloudimg-amd64.img > install.img
+curl $ubuntu_url/unpacked/bionic-server-cloudimg-amd64-vmlinuz-generic > vmlinuz
+curl $ubuntu_url/unpacked/bionic-server-cloudimg-amd64-initrd-generic > initrd
+curl $s3_url/blank.img.xz > blank.img.xz

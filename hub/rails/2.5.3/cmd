@@ -10,6 +10,9 @@ if [ "$RAILS_ENV" = production ]; then
   SECRET_KEY_BASE=0 bin/rails assets:precompile
 fi
 
+bin/rake db:migrate 2>/dev/null ||
+bin/rake db:setup
+
 if [ "$RAILS_ENV" != production ]; then
   bin/spring server >log/spring.log 2>&1 &
 fi

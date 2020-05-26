@@ -1,3 +1,5 @@
 #!/bin/sh
 
-tar cJvf disk.img.xz disk.img
+for name in ubuntu k3s; do
+	tar cJvf $name.img.xz $name.img
+done

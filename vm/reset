@@ -4,6 +4,8 @@ rm -f \
 install.img \
 initrd \
 vmlinuz \
-disk.img \
-disk.img.xz \
+ubuntu.img \
+ubuntu.img.xz \
+k3s.img \
+k3s.img.xz \
 seed.img

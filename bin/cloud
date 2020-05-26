@@ -4,10 +4,11 @@
 
 wait_count=15
 hosts_path=/etc/hosts
-bin_path=/usr/local/bin
 nfsd_path=/sbin/nfsd
 tcc_path=/Library/Application\ Support/com.apple.TCC/TCC.db
 rails_pod=rails
+bin_path=/usr/local/bin
+xhyve_path=$bin_path/xhyve
 
 terminal_path=/System/Applications/Utilities/Terminal.app
 terminal_client=com.apple.Terminal
@@ -24,7 +25,8 @@ exports_home_path=/System/Volumes/Data$HOME
 s3_url=https://chi-rb.s3.amazonaws.com
 s3_initrd_url=$s3_url/initrd
 s3_vmlinuz_url=$s3_url/vmlinuz
-s3_disk_url=$s3_url/disk.img.xz
+s3_ubuntu_url=$s3_url/ubuntu.img.xz
+s3_k3s_url=$s3_url/k3s.img.xz
 
 repo_path=/usr/local/cloud
 repo_app_path=$repo_path/app
@@ -32,15 +34,15 @@ repo_base_path=$repo_app_path/base
 repo_tmp_path=$repo_path/tmp
 repo_initrd_path=$repo_tmp_path/initrd
 repo_vmlinuz_path=$repo_tmp_path/vmlinuz
-repo_disk_path=$repo_tmp_path/disk.img.xz
+repo_ubuntu_path=$repo_tmp_path/ubuntu.img.xz
+repo_k3s_path=$repo_tmp_path/k3s.img.xz
 repo_bin_path=$repo_path/bin
-repo_xhyve_path=$repo_bin_path/xhyve
-repo_ruby_path=$repo_bin_path/ruby
 
 user_cloud_path=$HOME/.cloud
 user_conf_path=$user_cloud_path/conf
 user_pid_path=$user_cloud_path/pid
-user_disk_path=$user_cloud_path/disk.img
+user_ubuntu_path=$user_cloud_path/ubuntu.img
+user_k3s_path=$user_cloud_path/k3s.img
 
 vm_user=root
 vm_name=cloud
@@ -107,7 +109,12 @@ read_ini() {
 		;;
 		*)
 			if [ ! -z $value ]; then
-				export "${group}_${name}=$value"
+				case $value in
+				ENC\(*\))
+					value=$(cloud_decrypt "$value")
+				;;
+				esac
+				eval export "${group}_${name}=\"$value\""
 			fi
 		esac
 	done < "$1"
@@ -355,14 +362,15 @@ xhyve_ensure() {
 }
 
 xhyve_spawn() {
-	sudo nohup $repo_xhyve_path \
+	sudo nohup xhyve \
 	-U $vm_id \
 	-A \
 	-c $vm_cpus \
 	-m $vm_mem \
 	-s 0,hostbridge \
 	-s 2,virtio-net \
-	-s 4,virtio-blk,$user_disk_path \
+	-s 4,virtio-blk,$user_ubuntu_path \
+	-s 5,virtio-blk,$user_k3s_path \
 	-f "kexec,$repo_vmlinuz_path,$repo_initrd_path,root=/dev/vda1 ro" \
 	&>/dev/null &
 	echo $! > $user_pid_path
@@ -551,16 +559,18 @@ compile_statics() {
 			YML
 		fi
 	else
-		cat <<-YML > "$cloud_kaniko_docker_path"
-			apiVersion: v1
-			kind: Secret
-			metadata:
-			  name: kaniko-docker
-			type: Opaque
-			stringData:
-			  config.json: |
-			$(echo "$cloud_docker_config" | indent)
-		YML
+		if [ $cloud_context != local ]; then
+			cat <<-YML > "$cloud_kaniko_docker_path"
+				apiVersion: v1
+				kind: Secret
+				metadata:
+					name: kaniko-docker
+				type: Opaque
+				stringData:
+					config.json: |
+				$(echo "$cloud_docker_config" | indent)
+			YML
+		fi
 	fi
 	cat <<-YML > "$cloud_data_path"
 		apiVersion: v1
@@ -692,6 +702,35 @@ compile() {
 
 # CLOUD 
 
+cloud_ensure_args() {
+	if [ -z $cloud_key ]; then
+		error '$CLOUD_KEY not defined'
+	fi
+	if [ -z "$1" ]; then
+		error 'No arg provided'
+	fi
+}
+
+cloud_gen_key() {
+	gen_pass
+}
+
+cloud_encrypt() {
+	local secret
+	cloud_set_globals
+	cloud_ensure_args "$1"
+	secret=$(echo "$1" | openssl enc -k $cloud_key -aes256 -salt -base64 -A -e | sed 's/\\n//')
+	echo "ENC($secret)"
+}
+
+cloud_decrypt() {
+	local secret
+	cloud_set_globals
+	cloud_ensure_args "$1"
+	secret=$(echo "$1" | sed 's/^ENC(//' | sed 's/)$//')
+	echo "$secret" | openssl enc -k $cloud_key -aes256 -salt -base64 -A -d
+}
+
 cloud_kubectl() {
 	local cmd
 	cmd=$@
@@ -755,7 +794,7 @@ cloud_boot() {
 				clusters:
 				- cluster:
 				    server: $aws_endpoint
-				    certificate-authority-data: $aws_certificate=
+				    certificate-authority-data: $(echo "$aws_certificate" | base64)
 				  name: kubernetes
 				contexts:
 				- context:
@@ -825,6 +864,7 @@ cloud_choose_name() {
 }
 
 cloud_set_globals() {
+	cloud_key=$CLOUD_KEY
 	if [ -z $cloud_context ]; then
 		cloud_context=${CLOUD_CONTEXT:-local}
 	fi
@@ -941,8 +981,8 @@ cloud_authorize_nfsd() {
 
 cloud_authorize_xhyve() {
 	begin Authorizing XHYVE
-	if ! bin_authorized $repo_xhyve_path; then
-		authorize_bin $repo_xhyve_path
+	if ! bin_authorized $xhyve_path; then
+		authorize_bin $xhyve_path
 	else
 		echo Already authorized
 	fi
@@ -1281,6 +1321,17 @@ cloud_log() {
 	cloud_kubectl logs -f $name
 }
 
+cloud_gen_registry_auth() {
+	local secret
+	cloud_registry_user=cloud
+	secret=$(cloud_encrypt $cloud_registry_user)
+	add_conf "$cloud_context_path" cloud_registry_user $secret
+	cloud_registry_pass=$(gen_pass)
+	secret=$(cloud_encrypt $cloud_registry_pass)
+	add_conf "$cloud_context_path" cloud_registry_pass $secret
+	htpasswd=$(htpasswd -Bbn $cloud_registry_user $cloud_registry_pass)
+}
+
 cloud_config() {
 	if [ $cloud_context = local ]; then
 		vm_kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
@@ -1390,11 +1441,7 @@ cloud_config() {
 			  private: |
 			$(cat $cloud_cert_path/private | indent)
 		YML
-		cloud_registry_user=cloud
-		add_conf "$cloud_context_path" cloud_registry_user
-		cloud_registry_pass=$(gen_pass)
-		add_conf "$cloud_context_path" cloud_registry_pass
-		htpasswd=$(htpasswd -Bbn $cloud_registry_user $cloud_registry_pass)
+		htpasswd=$(cloud_gen_registry_auth)
 		cat <<-YML | vm_kubectl apply -f -
 			apiVersion: v1
 			kind: Secret
@@ -1720,18 +1767,24 @@ vm_download() {
 		mkdir -p $repo_tmp_path
 		curl -o $repo_initrd_path $s3_initrd_url
 		curl -o $repo_vmlinuz_path $s3_vmlinuz_url
-		curl -o $repo_disk_path $s3_disk_url
+		curl -o $repo_ubuntu_path $s3_ubuntu_url
+		curl -o $repo_k3s_path $s3_k3s_url
 	else
 		echo Already downloaded
 	fi
 }
 
-vm_create_disk() {
-	begin Creating Disk
-	if [ ! -f $user_disk_path ]; then
-		tar xJvf $repo_disk_path -C $user_cloud_path
+vm_create_disks() {
+	begin Creating Disks
+	if [ ! -f $user_ubuntu_path ]; then
+		tar xJvf $repo_ubuntu_path -C $user_cloud_path
 	else
-		echo Already created
+		echo Ubuntu disk already created
+	fi
+	if [ ! -f $user_k3s_path ]; then
+		tar xJvf $repo_k3s_path -C $user_cloud_path
+	else
+		echo K3s disk already created
 	fi
 }
 
@@ -1791,7 +1844,7 @@ vm_first_start() {
 vm_install() {
 	vm_download
 	vm_init
-	vm_create_disk
+	vm_create_disks
 	vm_first_start
 	vm_share_home
 	if [ "$1" != nested ]; then
@@ -1803,7 +1856,8 @@ vm_delete_files() {
 	begin Deleting Files
 	if [ -d $repo_tmp_path ]; then
 		rm -rf $repo_tmp_path
-		rm -rf $user_disk_path
+		rm -rf $user_ubuntu_path
+		rm -rf $user_k3s_path
 	else
 		echo Not found
 	fi
@@ -1991,17 +2045,20 @@ aws() {
 }
 
 aws_config() {
+	local secret
 	begin Configure AWS
 	if [ -z $aws_access_key_id ] || [ -z $aws_secret_access_key ] || [ -z $aws_region ]; then
 		if [ -z $aws_access_key_id ]; then
 			printf 'Enter access key id: '
-			read aws_access_key_id
-			add_conf "$cloud_context_path" aws_access_key_id
+			read -s aws_access_key_id
+			secret=$(cloud_encrypt $aws_access_key_id)
+			add_conf "$cloud_context_path" aws_access_key_id $secret
 		fi
 		if [ -z $aws_secret_access_key ]; then
 			printf 'Enter secret access key: '
 			read -s aws_secret_access_key
-			add_conf "$cloud_context_path" aws_secret_access_key
+			secret=$(cloud_encrypt $aws_secret_access_key)
+			add_conf "$cloud_context_path" aws_secret_access_key $secret
 		fi
 		if [ -z $aws_region ]; then
 			echo
@@ -2240,8 +2297,9 @@ aws_create_cluster() {
 		json=$(aws eks describe-cluster --name $aws_cluster_name)
 		aws_endpoint=$(echo "$json" | read_json endpoint)
 		add_conf "$cloud_context_path" aws_endpoint
-		aws_certificate=$(echo "$json" | read_json data | sed 's/=//')
-		add_conf "$cloud_context_path" aws_certificate
+		aws_certificate=$(echo "$json" | read_json data | base64 -d)
+		secret=$(cloud_encrypt $aws_certificate)
+		add_conf "$cloud_context_path" aws_certificate $secret
 	else
 		echo Already created
 	fi
@@ -2349,6 +2407,15 @@ attach)
 ;;
 tunnel)
 	cloud_tunnel $2
+;;
+gen-key)
+	cloud_gen_key
+;;
+encrypt)
+	cloud_encrypt "$2"
+;;
+decrypt)
+	cloud_decrypt "$2"
 ;;
 exec)
 	shift

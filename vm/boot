@@ -7,7 +7,8 @@ sudo /usr/local/cloud/bin/xhyve \
 -m 4G \
 -s 0,hostbridge \
 -s 2,virtio-net \
--s 4,virtio-blk,disk.img \
+-s 4,virtio-blk,ubuntu.img \
+-s 5,virtio-blk,k3s.img \
 -s 31,lpc \
 -l com1,stdio \
 -f 'kexec,vmlinuz,initrd,earlyprintk=serial console=ttyS0 root=/dev/vda1'
