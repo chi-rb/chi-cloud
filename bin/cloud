@@ -2,6 +2,7 @@
 
 # SETTINGS
 
+branch=dev
 wait_count=15
 hosts_path=/etc/hosts
 nfsd_path=/sbin/nfsd
@@ -37,6 +38,7 @@ repo_vmlinuz_path=$repo_tmp_path/vmlinuz
 repo_ubuntu_path=$repo_tmp_path/ubuntu.img.xz
 repo_k3s_path=$repo_tmp_path/k3s.img.xz
 repo_bin_path=$repo_path/bin
+repo_xhyve_path=$repo_path/bin
 
 user_cloud_path=$HOME/.cloud
 user_conf_path=$user_cloud_path/conf
@@ -951,7 +953,7 @@ cloud_clone() {
 	begin Cloning Repository
 	if [ ! -d $repo_path ]; then
 		mkdir -p $tmp_path
-		git clone git@github.com:chi-rb/chi-cloud.git $tmp_repo_path
+		git clone git@github.com:chi-rb/chi-cloud.git --single-branch --branch $branch $tmp_repo_path
 		sudo mv $tmp_repo_path $repo_path
 	else
 		echo Already cloned
@@ -981,8 +983,8 @@ cloud_authorize_nfsd() {
 
 cloud_authorize_xhyve() {
 	begin Authorizing XHYVE
-	if ! bin_authorized $xhyve_path; then
-		authorize_bin $xhyve_path
+	if ! bin_authorized $repo_xhyve_path; then
+		authorize_bin $repo_xhyve_path
 	else
 		echo Already authorized
 	fi
@@ -992,26 +994,32 @@ cloud_add_bins() {
 	local name
 	begin Adding Binaries
 	for name in $(get_bin_names); do
-		ln -s $repo_bin_path/$name $bin_path/$name
+		path=$bin_path/$name
+		if [ ! -f $path ]; then
+			ln -s $repo_bin_path/$name 
+		fi
 	done
 }
 
 cloud_delete_bins() {
-	local name
+	local name path
 	begin Deleting Binaries
 	for name in $(get_bin_names); do
-		rm $bin_path/$name
+		path=$bin_path/$name
+		if [ -f $path ]; then
+			rm $path
+		fi
 	done
 }
 
 cloud_install() {
 	cloud_clone
-	cloud_set_globals
 	cloud_add_bins
 	cloud_authorize_terminal
 	cloud_authorize_nfsd
 	cloud_authorize_xhyve
 	vm_install nested
+	cloud_set_globals
 	cloud_config
 	complete
 }
