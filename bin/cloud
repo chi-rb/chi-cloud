@@ -2,6 +2,7 @@
 
 # SETTINGS
 
+pid=$$
 branch=dev
 wait_count=15
 hosts_path=/etc/hosts
@@ -124,15 +125,15 @@ read_ini() {
 
 authorize() {
 	local user pass
-	echo "Enter username: \c"
+	printf 'Enter username: '
 	read user
-	echo "Enter password: \c"
+	printf 'Enter password: '
 	read -s pass
 }
 
 error() {
 	echo $@ >&2
-	exit 1
+	kill -10 $pid
 }
 
 begin() {
@@ -149,7 +150,7 @@ indent() {
 
 correct() {
 	local yn
-	echo "Correct (Y/n)? \c"
+	printf 'Correct (Y/n)? '
 	read yn
 	if [ "$yn" = n ]; then
 		return 1
@@ -859,7 +860,7 @@ cloud_ensure_env() {
 
 cloud_choose_name() {
 	if [ -z $cloud_name ]; then
-		echo "Enter name: \c"
+		printf 'Enter name: '
 		read	cloud_name
 		add_conf "$cloud_base_path" cloud_name
 	fi
@@ -1925,7 +1926,7 @@ vm_choose_settings() {
 			value=${!user_setting_names[$i]}
 			echo $desc: $value
 			if ! correct; then
-				echo "Enter new value: \c"
+				printf 'Enter new value: '
 				read $name
 			fi
 			echo
@@ -2361,6 +2362,8 @@ aws_create_cloud() {
 	aws_create_cluster
 	aws_create_nodegroup
 }
+
+trap 'exit 1' 10
 
 if [ -f $user_conf_path ]; then
 	read_ini $user_conf_path
