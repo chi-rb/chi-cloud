@@ -1004,12 +1004,14 @@ cloud_add_bins() {
 cloud_delete_bins() {
 	local name path
 	begin Deleting Binaries
-	for name in $(get_bin_names); do
-		path=$bin_path/$name
-		if [ -f $path ]; then
-			rm $path
-		fi
-	done
+	if [ -d $repo_path ]; then
+		for name in $(get_bin_names); do
+			path=$bin_path/$name
+			if [ -f $path ]; then
+				rm $path
+			fi
+		done
+	fi
 }
 
 cloud_install() {
