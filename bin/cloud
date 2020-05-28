@@ -38,7 +38,7 @@ repo_vmlinuz_path=$repo_tmp_path/vmlinuz
 repo_ubuntu_path=$repo_tmp_path/ubuntu.img.xz
 repo_k3s_path=$repo_tmp_path/k3s.img.xz
 repo_bin_path=$repo_path/bin
-repo_xhyve_path=$repo_path/bin
+repo_xhyve_path=$repo_bin_path/xhyve
 
 user_cloud_path=$HOME/.cloud
 user_conf_path=$user_cloud_path/conf
