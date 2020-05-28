@@ -996,7 +996,7 @@ cloud_add_bins() {
 	for name in $(get_bin_names); do
 		path=$bin_path/$name
 		if [ ! -f $path ]; then
-			ln -s $repo_bin_path/$name 
+			ln -s $repo_bin_path/$name $path
 		fi
 	done
 }
