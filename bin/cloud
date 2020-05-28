@@ -1006,13 +1006,13 @@ cloud_delete_bins() {
 
 cloud_install() {
 	cloud_clone
+	cloud_set_globals
+	cloud_add_bins
 	cloud_authorize_terminal
 	cloud_authorize_nfsd
 	cloud_authorize_xhyve
 	vm_install nested
-	cloud_set_globals
 	cloud_config
-	cloud_add_bins
 	complete
 }
 
