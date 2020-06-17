@@ -1,9 +1,7 @@
 #!/bin/sh
 
 apt update
-DEBIAN_FRONTEND=noninteractive \
-apt install -y \
-vim \
+apt install \
 git-core \
 curl \
 tzdata \

@@ -1,0 +1,97 @@
+#!/bin/sh
+
+sites_path=/etc/nginx/sites-enabled
+site_path=$sites_path/cloud
+conf_path=/etc/nginx/conf.d
+proxy_path=$conf_path/proxy.conf
+
+registry=$(cat <<CONF
+location / {
+  include /etc/nginx/conf.d/proxy.conf;
+  proxy_pass http://registry.default.svc.cluster.local:5000;
+}
+CONF
+)
+
+http=$(cat <<CONF
+listen 80;
+CONF
+)
+
+if [ $CLOUD_CONTEXT = local ]; then
+	cat <<-CONF > $site_path
+		server {
+		  server_name registry.cloud;
+			$http
+		  $registry
+		}
+
+		server {
+		  server_name cloud;
+		  $http
+
+		  location ~ /([0-9a-z\-\_]+)/([0-9a-z\-\_]+).* {
+		    include $proxy_path;
+		    proxy_pass http://rails.\$1-\$2.svc.cluster.local;
+		  }
+		}
+	CONF
+else
+	naked_domain=$(echo $DOMAIN | rev | cut -d . -f 1-2 | rev)
+	server_name=.$naked_domain
+	letsencrypt_path=/letsencrypt/live/$naked_domain
+	cert_path=$letsencrypt_path/fullchain.pem
+	key_path=$letsencrypt_path/privkey.pem
+
+	if [ $DOMAIN = $naked_domain ]; then
+		$redirect_domain=www.$naked_domain
+	else
+		$redirect_domain=$naked_domain
+	fi
+
+	redirect=$(cat <<-CONF
+		return 301 https://$DOMAIN\$request_uri;
+	CONF
+	)
+
+	https=$(cat <<-CONF
+		listen 443 ssl http2;
+		ssl_certificate $cert_path;
+		ssl_certificate_key $key_path;
+	CONF
+	)
+
+	cat <<-CONF > $site_path
+		server {
+		  server_name $server_name;
+		  $http
+		  $redirect
+		}
+
+		server {
+		  server_name $redirect_domain;
+		  $https
+		  $redirect
+		}
+
+		server {
+		  server_name registry.$naked_domain;
+		  $https
+		  $registry
+		}
+
+		server {
+		  server_name $server_name;
+		  $https
+
+		  location / {
+		    include $proxy_path;
+		    proxy_pass http://rails.$CLOUD_NAME-production.svc.cluster.local;
+		  }
+		}
+	CONF
+
+	issue-cert
+fi
+
+nginx -g 'daemon off;'

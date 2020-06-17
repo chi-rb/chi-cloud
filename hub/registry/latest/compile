@@ -1,0 +1,18 @@
+#!/bin/sh
+
+tag=master
+url=https://raw.githubusercontent.com/docker/distribution-library-image/$tag/amd64/registry
+bin_path=/bin/registry
+etc_path=/etc/docker/registry
+
+apt update
+apt install \
+curl \
+apache2-utils
+
+curl $url > $bin_path
+chmod +x $bin_path
+
+mkdir -p $etc_path
+cp /mnt/config.yml $etc_path
+cp /mnt/start /bin

@@ -1,0 +1,10 @@
+#!/bin/sh
+
+add-apt-repository ppa:certbot/certbot
+
+apt update
+apt install \
+certbot \
+python3-certbot-dns-cloudflare
+
+cp /mnt/issue-cert /bin

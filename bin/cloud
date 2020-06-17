@@ -105,7 +105,7 @@ complete() {
 
 read_ini() {
 	local name value group
-	while IFS='=' read name value; do
+	while IFS=' = ' read name value; do
 		case $name in
 		\[*\])
 			group=$(echo $name | sed 's/\[//' | sed 's/\]//')
@@ -269,13 +269,6 @@ delete_line() {
 	else
 		error "File $1 don't exist"
 	fi
-}
-
-gen_init() {
-	cat <<-SH
-		# Cloud
-		eval "\$(/usr/local/cloud/bin/cloud init)"
-	SH
 }
 
 bin_authorized() {
@@ -490,15 +483,11 @@ compile_tpls() {
 		export "${name}_name=$pod_name"
 		if [ -f "$cloud_build_path/$name/Dockerfile" ]; then
 			if [ $cloud_context = local ]; then
-				if [ $1 = build ]; then
-					host=cloud:32000
-				else
-					host=localhost:32000
-				fi
+				host=registry.cloud
 			else
 				host=$cloud_registry_host
 			fi
-			export "${name}_image=$host/$cloud_id/$name"
+			export "${name}_image=$host/$cloud_name/$cloud_env/$name"
 		fi
 	done
 	for i in ${!paths[@]}; do
@@ -514,26 +503,7 @@ compile_tpls() {
 compile_statics() {
 	local namespaces resources
 	if [ $1 != build ]; then
-		if [ -z "$cloud_kubeconfig" ]; then
-			cat <<-YML > "$cloud_ingress_path"
-				apiVersion: networking.k8s.io/v1beta1
-				kind: Ingress
-				metadata:
-				  name: ingress
-				  labels:
-				    name: ingress
-				  annotations:
-				    kubernetes.io/ingress.class: traefik
-				spec:
-				  rules:
-				  - http:
-				      paths:
-				      - path: $cloud_relative_path
-				        backend:
-				          serviceName: rails
-				          servicePort: 80
-			YML
-		else
+		if [ ! -z "$cloud_kubeconfig" ]; then
 			cat <<-YML > "$cloud_registry_docker_path"
 				apiVersion: v1
 				kind: Secret
@@ -651,6 +621,10 @@ compile() {
 						    volumeMounts:
 						    - name: mnt
 						      mountPath: /mnt
+						  hostAliases:
+					    - ip: $vm_ip
+					      hostnames:
+					      - registry.cloud
 						  volumes:
 						  - name: mnt
 						    hostPath:
@@ -916,7 +890,6 @@ cloud_set_vars() {
 		app_path=$PWD
 	fi
 	cloud_path=$app_path/cloud
-	cloud_cert_path=$cloud_path/cert
 	cloud_kube_path=$cloud_path/kube
 	cloud_contexts_path=$cloud_path/contexts
 	cloud_local_path=$cloud_contexts_path/local
@@ -930,7 +903,6 @@ cloud_set_vars() {
 	cloud_kubeconfig_path=$cloud_tmp_path/kubeconfig
 	cloud_compile_path=$cloud_tmp_path/compile
 	cloud_apply_path=$cloud_tmp_path/apply
-	cloud_ingress_path=$cloud_apply_path/ingress.yml
 	cloud_kaniko_docker_path=$cloud_apply_path/kaniko-docker.yml
 	cloud_registry_docker_path=$cloud_apply_path/registry-docker.yml
 	cloud_namespace_path=$cloud_apply_path/namespace.yml
@@ -1022,8 +994,6 @@ cloud_install() {
 	cloud_authorize_nfsd
 	cloud_authorize_xhyve
 	vm_install nested
-	cloud_set_globals
-	cloud_config
 	complete
 }
 
@@ -1142,10 +1112,6 @@ cloud_generate() {
 	fi
 }
 
-cloud_init() {
-	echo 'export PATH="/usr/local/cloud/bin:$PATH"'
-}
-
 cloud_create() {
 	cloud_set_vars "$@"
 	cloud_generate
@@ -1157,7 +1123,7 @@ cloud_open() {
 	local url
 	cloud_load
 	if [ $cloud_context = local ]; then
-		url=$vm_name/$cloud_id
+		url=$vm_name/$cloud_name/$cloud_env
 	else
 		url=$cloud_host
 	fi
@@ -1177,7 +1143,11 @@ cloud_bin() {
 		else
 			cmd=$target
 		fi
-		cloud_exec -- $cmd "$@"
+		if [ $cmd = kubectl ]; then
+			cloud_kubectl	"$@"
+		else
+			cloud_exec -- $cmd "$@"
+		fi
 	else
 		alt=$(which -a $target | grep -A 1 $abs_path | tail -n 1)
 		if [ -z "$alt" ]; then
@@ -1347,20 +1317,65 @@ cloud_config() {
 	if [ $cloud_context = local ]; then
 		vm_kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
 		cat <<-YML | vm_kubectl apply -f -
-			apiVersion: v1
+		apiVersion: v1
 			kind: Service
 			metadata:
 			  name: registry
 			  labels:
 			    name: registry
 			spec:
-			  type: NodePort
 			  selector:
 			    name: registry
 			  ports:
 			  - name: registry
 			    port: 5000
-			    nodePort: 32000
+			    nodePort: null
+			---
+			apiVersion: v1
+			kind: Service
+			metadata:
+			  name: ingress
+			  labels:
+			    name: ingress
+			spec:
+			  type: LoadBalancer
+			  selector:
+			    name: ingress
+			  ports:
+			  - name: http
+			    port: 80
+			    targetPort: 80
+			---
+			apiVersion: apps/v1
+			kind: Deployment
+			metadata:
+			  name: ingress
+			  labels:
+			   name: ingress
+			spec:
+			  selector:
+			    matchLabels:
+			      name: ingress
+			  template:
+			    metadata:
+			      labels:
+			        name: ingress
+			    spec:
+			      containers:
+			      - name: ingress
+			        image: chirb/nginx:1.18.0
+			        imagePullPolicy: Always
+			        env:
+			        - name: CLOUD_CONTEXT
+			          value: local
+			        volumeMounts:
+			        - mountPath: /etc/letsencrypt
+			          name: data
+			          subPath: letsencrypt
+			      volumes:
+			      - name: data
+			        persistentVolumeClaim:
+			          claimName: data
 		YML
 	else
 		case $cloud_provider in
@@ -1372,6 +1387,22 @@ cloud_config() {
 			  metadata:
 			    name: efs-sc
 			  provisioner: efs.csi.aws.com
+				---
+				apiVersion: v1
+				kind: PersistentVolume
+				metadata:
+				  name: default
+				spec:
+				  capacity:
+				    storage: 1Gi
+				  volumeMode: Filesystem
+				  accessModes:
+				  - $cloud_access_mode
+				  persistentVolumeReclaimPolicy: Retain
+				  storageClassName: efs-sc
+				  csi:
+				    driver: efs.csi.aws.com
+				    volumeHandle: $aws_file_system_id
 				---
 				apiVersion: v1
 				kind: PersistentVolume
@@ -1388,22 +1419,6 @@ cloud_config() {
 				  csi:
 				    driver: efs.csi.aws.com
 				    volumeHandle: $aws_file_system_id
-				---
-				apiVersion: v1
-				kind: PersistentVolume
-				metadata:
-				  name: registry
-				spec:
-				  capacity:
-				    storage: 1Gi
-				  volumeMode: Filesystem
-				  accessModes:
-				  - $cloud_access_mode
-				  persistentVolumeReclaimPolicy: Retain
-				  storageClassName: efs-sc
-				  csi:
-				    driver: efs.csi.aws.com
-				    volumeHandle: $aws_file_system_id
 			YML
 		;;
 		esac
@@ -1411,26 +1426,60 @@ cloud_config() {
 			apiVersion: v1
 			kind: Service
 			metadata:
-			  name: registry
+			  name: ingress
 			  labels:
-			    name: registry
+			    name: ingress
 			spec:
 			  type: LoadBalancer
 			  selector:
-			    name: registry
+			    name: ingress
 			  ports:
-			  - name: registry
+			  - name: http
+			    port: 80
+			    targetPort: 80
+			  - name: https
 			    port: 443
-			    targetPort: 5000
+			    targetPort: 443
+			---
+			apiVersion: apps/v1
+			kind: Deployment
+			metadata:
+			  name: ingress
+			  labels:
+			    name: ingress
+			spec:
+			  selector:
+			    matchLabels:
+			      name: ingress
+			  template:
+			    metadata:
+			      labels:
+			        name: ingress
+			    spec:
+			      containers:
+			      - name: ingress
+			        image: chirb/nginx:1.18.0
+			        imagePullPolicy: Always
+			        env:
+			        - name: CLOUD_CONTEXT
+			          value: $cloud_context
+			        volumeMounts:
+			        - mountPath: /etc/letsencrypt
+			          name: data
+			          subPath: letsencrypt
+			      volumes:
+			      - name: data
+			        persistentVolumeClaim:
+			          claimName: data
 		YML
 	fi
 	cat <<-YML | vm_kubectl apply -f -
 		apiVersion: v1
 		kind: PersistentVolumeClaim
 		metadata:
-		  name: registry
+		  name: data
 		  labels:
-		    name: registry
+		    name: data
 		spec:
 		  storageClassName: $cloud_storage_class
 		  accessModes:
@@ -1439,85 +1488,7 @@ cloud_config() {
 		    requests:
 		      storage: 1Gi
 	YML
-	if [ $cloud_context != local ] && [ -d $cloud_cert_path ]; then
-		cat <<-YML | vm_kubectl apply -f -
-			apiVersion: v1
-			kind: Secret
-			metadata:
-			  name: cert
-			type: Opaque
-			stringData:
-			  public: |
-			$(cat $cloud_cert_path/public | indent)
-			  private: |
-			$(cat $cloud_cert_path/private | indent)
-		YML
-		htpasswd=$(cloud_gen_registry_auth)
-		cat <<-YML | vm_kubectl apply -f -
-			apiVersion: v1
-			kind: Secret
-			metadata:
-			  name: registry-auth
-			type: Opaque
-			stringData:
-			  htpasswd: |
-			$(echo "$htpasswd" | indent)
-		YML
-		case $cloud_provider in
-		aws)
-			cat <<-YML | vm_kubectl apply -f -
-				apiVersion: apps/v1
-				kind: Deployment
-				metadata:
-				  name:  registry
-				  labels:
-				    name: registry
-				spec:
-				  selector:
-				    matchLabels:
-				      name: registry
-				  template:
-				    metadata:
-				      labels:
-				        name: registry
-				    spec:
-				      containers:
-				      - image: registry:2
-				        name: registry
-				        env:
-				        - name: REGISTRY_HTTP_TLS_CERTIFICATE
-				          value: /cert/public
-				        - name: REGISTRY_HTTP_TLS_KEY
-				          value: /cert/private
-				        - name: REGISTRY_AUTH
-				          value: htpasswd
-				        - name: REGISTRY_AUTH_HTPASSWD_PATH
-				          value: /auth/htpasswd
-				        - name: REGISTRY_AUTH_HTPASSWD_REALM
-				          value: Registry
-				        volumeMounts:
-				        - mountPath: /var/lib/registry
-				          name: registry
-				        - mountPath: /cert
-				          name: cert
-				          readOnly: true
-				        - mountPath: /auth
-				          name: auth
-				          readOnly: true
-				      volumes:
-				      - name: registry
-				        persistentVolumeClaim:
-				          claimName: registry
-				      - name: cert
-				        secret:
-				          secretName: cert
-				      - name: auth
-				        secret:
-				          secretName: registry-auth
-			YML
-		;;
-		esac
-	else
+	if [ $cloud_context = local ]; then
 		cat <<-YML | vm_kubectl apply -f -
 			apiVersion: apps/v1
 			kind: Deployment
@@ -1536,20 +1507,75 @@ cloud_config() {
 			    spec:
 			      containers:
 			      - image: registry:2
-			        name: redis
+			        name: registry
+			        imagePullPolicy: Always
 			        volumeMounts:
 			        - mountPath: /var/lib/registry
-			          name: registry
+			          name: data
+			          subPath: registry
 			      volumes:
-			      - name: registry
+			      - name: data
 			        persistentVolumeClaim:
-			          claimName: registry
+			          claimName: data
+		YML
+	else
+		htpasswd=$(cloud_gen_registry_auth)
+		cat <<-YML | vm_kubectl apply -f -
+			apiVersion: v1
+			kind: Secret
+			metadata:
+			  name: registry-auth
+			type: Opaque
+			stringData:
+			  htpasswd: |
+			$(echo "$htpasswd" | indent)
+			---
+			apiVersion: apps/v1
+			kind: Deployment
+			metadata:
+			  name:  registry
+			  labels:
+			    name: registry
+			spec:
+			  selector:
+			    matchLabels:
+			      name: registry
+			  template:
+			    metadata:
+			      labels:
+			        name: registry
+			    spec:
+			      containers:
+			      - image: registry:2
+			        name: registry
+			        imagePullPolicy: Always
+			        env:
+			        - name: REGISTRY_AUTH
+			          value: htpasswd
+			        - name: REGISTRY_AUTH_HTPASSWD_PATH
+			          value: /auth/htpasswd
+			        - name: REGISTRY_AUTH_HTPASSWD_REALM
+			          value: Registry
+			        volumeMounts:
+			        - mountPath: /var/lib/registry
+			          name: data
+			          subPath: registry
+			        - mountPath: /auth
+			          name: auth
+			          readOnly: true
+			      volumes:
+			      - name: data
+			      	persistentVolumeClaim:
+			      	  claimName: data
+			      - name: auth
+			        secret:
+			          secretName: registry-auth
 		YML
 	fi
 }
 
 cloud_help() {
-	unknown $1
+	unknown   
 	cat <<-DOC
 		Usage: cloud <command> [options]
 		Orchestrates Rails+Kubernetes Clouds.
@@ -1805,7 +1831,7 @@ vm_share_home() {
 		echo $exports_home_path -mapall=$(id -u) | sudo tee -a $exports_path
 		update_nfsd
 		vm_ssh <<-SSH
-			echo "$mac_ip:$exports_home_path	$HOME	nfs	local_lock=all	0 0" >> /etc/fstab
+			echo '$mac_ip:$exports_home_path	$HOME	nfs	local_lock=all	0 0' >> /etc/fstab
 			mkdir -p $HOME
 			mount $HOME
 		SSH
@@ -1825,7 +1851,7 @@ vm_init() {
 }
 
 vm_add_host() {
-	echo $vm_ip $vm_name | sudo tee -a $hosts_path
+	echo $vm_ip $vm_name registry.$vm_name | sudo tee -a $hosts_path
 }
 
 vm_first_start() {
@@ -1858,6 +1884,8 @@ vm_install() {
 	vm_create_disks
 	vm_first_start
 	vm_share_home
+	cloud_set_globals
+	cloud_config
 	if [ "$1" != nested ]; then
 		complete
 	fi
@@ -2370,6 +2398,9 @@ if [ -f $user_conf_path ]; then
 fi
 
 case $1 in
+debug)
+	get_bin_names
+;;
 install)
 	cloud_install
 ;;
@@ -2380,9 +2411,6 @@ update)
 	cloud_update
 ;;
 init)
-	cloud_init
-;;
-create)
 	shift
 	cloud_create "$@"
 ;;

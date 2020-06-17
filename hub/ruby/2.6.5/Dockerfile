@@ -1,5 +1,3 @@
-FROM ubuntu:18.04
+FROM chirb/base
 
-ENV EDITOR=vim
-
-RUN /mnt/run
+RUN /mnt/compile

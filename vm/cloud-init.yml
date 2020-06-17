@@ -19,6 +19,7 @@ write_files:
   permissions: '0755'
   content: |
     #!/bin/sh
+
     vm_ip=$(hostname -I | awk '{ print $1 }')
     mac_ip=$(echo $vm_ip | cut -d . -f 1-3).1
 
@@ -44,17 +45,22 @@ write_files:
   permissions: '0755'
   content: |
     #!/bin/sh
-    echo "LABEL=k3s /k3s  ext4  defaults  0 0" >> /etc/fstab
+
+    sed -i 's/localhost/localhost cloud registry.cloud/' /etc/hosts
+
+    echo 'LABEL=k3s	/k3s	ext4	defaults	0 0' >> /etc/fstab
     mkdir /k3s
     mount /k3s
 
-    curl -sfL https://get.k3s.io | sh -
+    curl -sfL https://get.k3s.io | sh -s - \
+    --no-deploy traefik \
+    --no-deploy metrics-server
     service k3s stop
     cat <<-EOF >> /etc/rancher/k3s/registries.yaml
       mirrors:
-        "cloud:32000":
+        'registry.cloud':
           endpoint:
-          - "http://cloud:32000"
+          - http://registry.cloud
     EOF
     mv /var/lib/rancher/k3s/* /k3s
     rmdir /var/lib/rancher/k3s
