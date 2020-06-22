@@ -1,12 +1,12 @@
 {{ render pod.service }}
---- 
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ name }}
   labels:
     name: {{ name }}
-spec:
+spec: 
   strategy:
     type: {{ strategy }}
   selector:
@@ -18,5 +18,5 @@ spec:
         name: {{ name }}
     spec:
       containers:
-      - image: {{ repo }}
+      - image: {{ image }}
         name: {{ name }}

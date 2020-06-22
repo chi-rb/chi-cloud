@@ -1,5 +1,5 @@
-{{ render node.service }}
---- 
+{{ render pod.service }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -9,7 +9,7 @@ metadata:
 spec:
   replicas: {{ replicas }}
   strategy:
-    type: Recreate
+    type: {{ strategy }}
   selector:
     matchLabels:
       name: {{ name }}
@@ -18,25 +18,31 @@ spec:
       labels:
         name: {{ name }}
     spec:
-      imagePullSecrets:
-      - name: docker
       containers:
-      - image: {{ repo }}
+      - image: {{ image }}
+        imagePullPolicy: {{ pull }}
         name: {{ name }}
         tty: true
         stdin: true
-        imagePullPolicy: Always
-        ports:
-        - containerPort: 3000
         env:
         - name: RAILS_MASTER_KEY
           value: '{{ master_key }}'
         - name: RAILS_ENV
-          value: {{ app_env }}
-        - name: RAILS_THREADS
-          value: {{ threads }}
+          value: {{ cloud_env }}
+        - name: RAILS_THREADS_MIN
+          value: '{{ threads_min }}'
+        - name: RAILS_THREADS_MAX
+          value: '{{ threads_max }}'
         - name: RAILS_WORKERS
           value: '{{ workers }}'
         - name: REDIS_URL
-          value: redis://{{ redis_host }}:{{ redis_pod_port }}
-{{ render rails.mount }}
+          value: {{ redis_url }}
+        - name: RAILS_RELATIVE_URL_ROOT
+          value: {{ cloud_relative_path }}
+        volumeMounts:
+        - mountPath: /rails
+          name: rails
+      volumes:
+      - name: rails
+        hostPath:
+          path: {{ app_path }}

@@ -1,7 +1,5 @@
 #!/bin/sh
 
-add-apt-repository ppa:certbot/certbot
-
 apt update
 apt install \
 certbot \

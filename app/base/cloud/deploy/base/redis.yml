@@ -1,7 +1,5 @@
-{{ render local.claim }}
---- 
 {{ render pod.service }}
---- 
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,12 +19,14 @@ spec:
         name: {{ name }}
     spec:
       containers:
-      - image: {{ repo }}
+      - image: {{ image }}
+        imagePullPolicy: {{ pull }}
         name: {{ name }}
         volumeMounts:
         - mountPath: /data
-          name: {{ name }}
+          name: data
+          subPath: {{ name }}
       volumes:
-      - name: {{ name }}
+      - name: data
         persistentVolumeClaim:
-          claimName: {{ name }}
+          claimName: data

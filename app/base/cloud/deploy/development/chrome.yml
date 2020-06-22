@@ -16,9 +16,15 @@ spec:
         name: {{ name }}
     spec:
       containers:
-      - image: {{ repo }}
+      - image: {{ image }}
         name: {{ name }}
         env:
         - name: GRID_HUB_HOST
           value: hub
-{{ render rails.mount }}
+        volumeMounts:
+        - mountPath: /rails
+          name: rails
+      volumes:
+      - name: rails
+        hostPath:
+          path: {{ app_path }}

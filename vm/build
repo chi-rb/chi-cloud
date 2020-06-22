@@ -1,12 +1,9 @@
 #!/bin/sh
 
-tar xJvf blank.img.xz
-cp blank.img k3s.img
-
 cloud vm exec -- apt install -y qemu-utils cloud-image-utils
 
-cloud vm exec -- qemu-img convert -f qcow2 -O raw install.img ubuntu.img
-dd if=/dev/zero bs=1g count=20 >> ubuntu.img
+cloud vm exec -- qemu-img convert -f qcow2 -O raw install.img disk.img
+dd if=/dev/zero bs=1g count=20 >> disk.img
 
 cloud vm exec -- cloud-localds seed.img cloud-init.yml
 

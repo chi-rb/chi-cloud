@@ -1,15 +1,6 @@
-FROM ruby:2.7
+FROM chirb/rails:2.6.5
 
 ARG RAILS_ENV
-COPY ./bin/* /usr/local/bin/
-WORKDIR /rails
- 
-ENV BUNDLE_JOBS=3
-ENV GEM_HOME=/rails/vendor/bundle
-ENV BUNDLE_PATH=/rails/vendor/bundle
-ENV EDITOR=vim
- 
-RUN install
-RUN compile
+ARG RAILS_MASTER_KEY
 
-CMD start
+RUN /mnt/cloud/build/rails/run

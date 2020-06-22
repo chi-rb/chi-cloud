@@ -9,4 +9,5 @@ spec:
     name: {{ name }}
   ports:
   - name: {{ name }}
-    port: {{ pod_port }}
+    port: {{ port }}
+    nodePort: null

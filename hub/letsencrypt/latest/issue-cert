@@ -1,7 +1,7 @@
 #!/bin/sh
 
 ini_path=/tmp/cloudflare.ini
-live_path=/etc/letsencrypt/live/$DOMAIN
+live_path=/etc/letsencrypt/live/$CLOUD_DOMAIN
 
 if [ -d $live_path ]; then
 	certbot renew
@@ -11,9 +11,9 @@ else
 	dns_cloudflare_api_key = $DNS_PASS
 	INI
 
-	opts="-d $DOMAIN"
-	if echo $DOMAIN | grep -qE '^[a-z]+\.[a-z]+$'; then
-		opts="$opts -d *.$DOMAIN"
+	opts="-d $CLOUD_DOMAIN"
+	if echo $CLOUD_DOMAIN | grep -qE '^[a-z]+\.[a-z]+$'; then
+		opts="$opts -d *.$CLOUD_DOMAIN"
 	fi
 
 	certbot certonly \

@@ -1,14 +1,20 @@
-strategy=Recreate
-replicas=1
+[cloud]
+strategy = Recreate
+replicas = 1
 
-redis_storage=200Mi
+[hub]
+repo = selenium/hub:3
+port = 4444
 
-rails_threads=1:1
-rails_workers=1
-rails_pod_port=80
-rails_master_key=12345678901234567890123456789012
+[chrome]
+repo = selenium/node-chrome:3
 
-chrome_repo=selenium/node-chrome:3
+[redis]
+storage = 200Mi
 
-hub_repo=selenium/hub:3
-hub_pod_port=4444
+[rails]
+threads_min = 1
+threads_max = 1
+workers = 1
+port = 80
+master_key = 12345678901234567890123456789012

@@ -21,7 +21,7 @@ CONF
 if [ $CLOUD_CONTEXT = local ]; then
 	cat <<-CONF > $site_path
 		server {
-		  server_name registry.cloud;
+		  server_name $CLOUD_REGISTRY_HOST;
 			$http
 		  $registry
 		}
@@ -37,20 +37,19 @@ if [ $CLOUD_CONTEXT = local ]; then
 		}
 	CONF
 else
-	naked_domain=$(echo $DOMAIN | rev | cut -d . -f 1-2 | rev)
-	server_name=.$naked_domain
-	letsencrypt_path=/letsencrypt/live/$naked_domain
+	server_name=.$CLOUD_DOMAIN
+	letsencrypt_path=/etc/letsencrypt/live/$CLOUD_DOMAIN
 	cert_path=$letsencrypt_path/fullchain.pem
 	key_path=$letsencrypt_path/privkey.pem
 
-	if [ $DOMAIN = $naked_domain ]; then
-		$redirect_domain=www.$naked_domain
+	if [ $CLOUD_HOST = $CLOUD_DOMAIN ]; then
+		redirect_domain=www.$CLOUD_DOMAIN
 	else
-		$redirect_domain=$naked_domain
+		redirect_domain=$CLOUD_DOMAIN
 	fi
 
 	redirect=$(cat <<-CONF
-		return 301 https://$DOMAIN\$request_uri;
+		return 301 https://$CLOUD_HOST\$request_uri;
 	CONF
 	)
 
@@ -75,7 +74,7 @@ else
 		}
 
 		server {
-		  server_name registry.$naked_domain;
+		  server_name $CLOUD_REGISTRY_HOST;
 		  $https
 		  $registry
 		}
@@ -85,8 +84,10 @@ else
 		  $https
 
 		  location / {
+		    resolver 10.43.0.10;
 		    include $proxy_path;
-		    proxy_pass http://rails.$CLOUD_NAME-production.svc.cluster.local;
+    		set \$pod http://rails.$CLOUD_NAME-production.svc.cluster.local;
+		    proxy_pass \$pod;
 		  }
 		}
 	CONF

@@ -1,6 +1,5 @@
 .DS_Store
 /.byebug_history
-/config/master.key
 
 /public/assets
 
