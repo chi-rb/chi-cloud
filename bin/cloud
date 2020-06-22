@@ -1363,7 +1363,7 @@ cloud_config() {
 			        - name: CLOUD_CONTEXT
 			          value: local
 			        - name: CLOUD_REGISTRY_HOST
-			          value: $cloud_registry_host
+			          value: registry.cloud
 			        volumeMounts:
 			        - name: data
 			          mountPath: /etc/letsencrypt
