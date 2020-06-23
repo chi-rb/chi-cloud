@@ -31,6 +31,7 @@ if [ $CLOUD_CONTEXT = local ]; then
 		  $http
 
 		  location ~ /([0-9a-z\-\_]+)/([0-9a-z\-\_]+).* {
+		    resolver 10.43.0.10;
 		    include $proxy_path;
 		    proxy_pass http://rails.\$1-\$2.svc.cluster.local;
 		  }
