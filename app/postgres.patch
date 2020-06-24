@@ -1,6 +1,6 @@
 diff -urN base/Gemfile postgres/Gemfile
 --- base/Gemfile	2020-03-08 07:11:54.000000000 -0300
-+++ postgres/Gemfile	2020-06-18 19:22:55.000000000 -0300
++++ postgres/Gemfile	2020-06-24 08:31:39.000000000 -0300
 @@ -2,6 +2,7 @@
  
  gem 'rails', '~> 5.2'
@@ -11,18 +11,20 @@ diff -urN base/Gemfile postgres/Gemfile
  gem 'turbolinks'
 diff -urN base/cloud/build/rails/run postgres/cloud/build/rails/run
 --- base/cloud/build/rails/run	2020-06-18 18:57:13.000000000 -0300
-+++ postgres/cloud/build/rails/run	2020-06-21 11:38:12.000000000 -0300
-@@ -1,5 +1,7 @@
++++ postgres/cloud/build/rails/run	2020-06-24 08:41:57.000000000 -0300
+@@ -1,5 +1,9 @@
  #!/bin/sh
  
-+apt install libpq-dev
++apt install \
++libpq-dev \
++postgresql-client
 +
  if [ "$RAILS_ENV" = production ]; then
    tar --exclude-from=/mnt/.dockerignore -C /mnt -cf - . | tar -C /rails -xf -
  fi
 diff -urN base/cloud/deploy/base/postgres.yml postgres/cloud/deploy/base/postgres.yml
 --- base/cloud/deploy/base/postgres.yml	1969-12-31 21:00:00.000000000 -0300
-+++ postgres/cloud/deploy/base/postgres.yml	2020-06-18 19:24:09.000000000 -0300
++++ postgres/cloud/deploy/base/postgres.yml	2020-06-24 08:31:39.000000000 -0300
 @@ -0,0 +1,38 @@
 +{{ render pod.service }}
 +---
@@ -63,8 +65,8 @@ diff -urN base/cloud/deploy/base/postgres.yml postgres/cloud/deploy/base/postgre
 +        persistentVolumeClaim:
 +          claimName: data
 diff -urN base/cloud/deploy/development/rails.yml postgres/cloud/deploy/development/rails.yml
---- base/cloud/deploy/development/rails.yml	2020-06-18 19:20:38.000000000 -0300
-+++ postgres/cloud/deploy/development/rails.yml	2020-06-18 19:24:46.000000000 -0300
+--- base/cloud/deploy/development/rails.yml	2020-06-18 19:27:43.000000000 -0300
++++ postgres/cloud/deploy/development/rails.yml	2020-06-24 08:31:39.000000000 -0300
 @@ -35,6 +35,14 @@
            value: '{{ threads_max }}'
          - name: RAILS_WORKERS
@@ -82,7 +84,7 @@ diff -urN base/cloud/deploy/development/rails.yml postgres/cloud/deploy/developm
          - name: RAILS_RELATIVE_URL_ROOT
 diff -urN base/cloud/envs/base postgres/cloud/envs/base
 --- base/cloud/envs/base	2020-06-18 19:09:02.000000000 -0300
-+++ postgres/cloud/envs/base	2020-06-18 19:26:14.000000000 -0300
++++ postgres/cloud/envs/base	2020-06-24 08:31:39.000000000 -0300
 @@ -3,3 +3,11 @@
  port = 6379
  storage = 200Mi
@@ -97,7 +99,7 @@ diff -urN base/cloud/envs/base postgres/cloud/envs/base
 +storage = 1Gi
 diff -urN base/config/database.yml postgres/config/database.yml
 --- base/config/database.yml	2020-03-08 07:11:54.000000000 -0300
-+++ postgres/config/database.yml	2020-06-18 19:25:07.000000000 -0300
++++ postgres/config/database.yml	2020-06-24 08:31:39.000000000 -0300
 @@ -1,4 +1,5 @@
  default: &default
 +  adapter: postgresql

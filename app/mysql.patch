@@ -1,6 +1,6 @@
 diff -urN base/Gemfile mysql/Gemfile
 --- base/Gemfile	2020-03-08 07:11:54.000000000 -0300
-+++ mysql/Gemfile	2020-06-18 19:15:28.000000000 -0300
++++ mysql/Gemfile	2020-06-24 08:31:18.000000000 -0300
 @@ -2,6 +2,7 @@
  
  gem 'rails', '~> 5.2'
@@ -11,18 +11,20 @@ diff -urN base/Gemfile mysql/Gemfile
  gem 'turbolinks'
 diff -urN base/cloud/build/rails/run mysql/cloud/build/rails/run
 --- base/cloud/build/rails/run	2020-06-18 18:57:13.000000000 -0300
-+++ mysql/cloud/build/rails/run	2020-06-21 11:38:40.000000000 -0300
-@@ -1,5 +1,7 @@
++++ mysql/cloud/build/rails/run	2020-06-24 08:34:16.000000000 -0300
+@@ -1,5 +1,9 @@
  #!/bin/sh
  
-+apt install libmysqlclient-dev
++apt install \
++libmariadb-dev \
++mariadb-client
 +
  if [ "$RAILS_ENV" = production ]; then
    tar --exclude-from=/mnt/.dockerignore -C /mnt -cf - . | tar -C /rails -xf -
  fi
 diff -urN base/cloud/deploy/base/mysql.yml mysql/cloud/deploy/base/mysql.yml
 --- base/cloud/deploy/base/mysql.yml	1969-12-31 21:00:00.000000000 -0300
-+++ mysql/cloud/deploy/base/mysql.yml	2020-06-18 19:16:05.000000000 -0300
++++ mysql/cloud/deploy/base/mysql.yml	2020-06-24 08:31:18.000000000 -0300
 @@ -0,0 +1,36 @@
 +{{ render pod.service }}
 +---
@@ -61,8 +63,8 @@ diff -urN base/cloud/deploy/base/mysql.yml mysql/cloud/deploy/base/mysql.yml
 +        persistentVolumeClaim:
 +          claimName: data
 diff -urN base/cloud/deploy/development/rails.yml mysql/cloud/deploy/development/rails.yml
---- base/cloud/deploy/development/rails.yml	2020-06-18 19:20:38.000000000 -0300
-+++ mysql/cloud/deploy/development/rails.yml	2020-06-18 19:16:37.000000000 -0300
+--- base/cloud/deploy/development/rails.yml	2020-06-18 19:27:43.000000000 -0300
++++ mysql/cloud/deploy/development/rails.yml	2020-06-24 08:31:18.000000000 -0300
 @@ -35,6 +35,14 @@
            value: '{{ threads_max }}'
          - name: RAILS_WORKERS
@@ -80,7 +82,7 @@ diff -urN base/cloud/deploy/development/rails.yml mysql/cloud/deploy/development
          - name: RAILS_RELATIVE_URL_ROOT
 diff -urN base/cloud/envs/base mysql/cloud/envs/base
 --- base/cloud/envs/base	2020-06-18 19:09:02.000000000 -0300
-+++ mysql/cloud/envs/base	2020-06-18 19:17:15.000000000 -0300
++++ mysql/cloud/envs/base	2020-06-24 08:31:18.000000000 -0300
 @@ -3,3 +3,11 @@
  port = 6379
  storage = 200Mi
@@ -95,7 +97,7 @@ diff -urN base/cloud/envs/base mysql/cloud/envs/base
 +storage = 1Gi
 diff -urN base/config/database.yml mysql/config/database.yml
 --- base/config/database.yml	2020-03-08 07:11:54.000000000 -0300
-+++ mysql/config/database.yml	2020-06-18 19:17:51.000000000 -0300
++++ mysql/config/database.yml	2020-06-24 08:31:18.000000000 -0300
 @@ -1,4 +1,5 @@
  default: &default
 +  adapter: mysql2
