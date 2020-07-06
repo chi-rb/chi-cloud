@@ -100,12 +100,31 @@ complete() {
 	echo DONE!
 }
 
+is_pod() {
+	echo "${cloud_pods[@]}" | grep -q $1
+}
+
 read_ini() {
-	local name value group
+	local OPTIND o name value group
+	save_pods=false
+	while getopts ':p' o; do
+		case "$o" in
+		p)
+			save_pods=true
+		;;
+		esac
+	done
+	shift $((OPTIND-1))
 	while IFS=' = ' read name value; do
 		case $name in
 		\[*\])
 			group=$(echo $name | sed 's/\[//' | sed 's/\]//')
+			if [ $save_pods = true ] && [ $group != cloud ] && ! $(is_pod $group); then
+				cloud_pods+=($group)
+			fi
+			if [ $group = mysql ] || [ $group = postgres ]; then
+				cloud_db=$group
+			fi
 		;;
 		*)
 			if [ ! -z $value ]; then
@@ -419,83 +438,6 @@ xhyve_running() {
 
 # COMPILE
 
-compile_tpl() {
-	local \
-	output subs sub sub_args render_path vars var snippet_path \
-	sub_value sub_name cloud_sub_name pod_sub_name target_sub_name
-	output=$(cat "$1")
-	subs=$(grep -o '{{ [a-z_. ]* }}' "$1" | uniq)
-	while read sub; do
-		sub_args=( $(echo $sub | sed 's/{{ //' | sed 's/ }}//') )
-		case $sub in
-		{{\ render\ *)
-			render_path=${sub_args[1]}
-			vars=("${sub_args[@]:2}")
-			for var in $vars; do
-				export $var
-			done
-			snippet_path=$cloud_snippets_path/$render_path.yml
-			sub_value=$(compile_tpl "$snippet_path" $2 $3 | sed 's/\//\\\//g' | tr '\n' '\r')
-			output=$(echo "$output" | sed "s/$sub/$sub_value/g" | tr '\r' '\n' | sed '/^$/d')
-		;;
-		*)
-			sub_name=${sub_args[0]}
-			cloud_sub_name=cloud_${sub_name}
-			pod_sub_name=${2}_${sub_name}
-			if [ ! -z "${!pod_sub_name}" ]; then
-				target_sub_name=$pod_sub_name
-			elif [ ! -z "${!cloud_sub_name}" ]; then
-				target_sub_name=$cloud_sub_name
-			elif [ ! -z "${!sub_name}" ]; then
-				target_sub_name=$sub_name
-			else
-				error $sub undefined, compiling $1 in $cloud_env
-			fi
-			sub_value=$(echo ${!target_sub_name} | sed 's/\//\\\//g')
-			output=$(echo "$output" | sed "s/$sub/$sub_value/g")
-		;;
-		esac
-	done <<-EOF
-		$(echo "$subs")
-	EOF
-	echo "$output"
-}
-
-compile_tpls() {
-	local paths names pod_names path i name pod_name host apply_path
-	paths=()
-	names=()
-	pod_names=()
-	while read path; do
-		paths+=("$path")
-	done <<< "$(find "$cloud_compile_path" -type f -name '*.yml')"
-	for i in ${!paths[@]}; do
-		path=${paths[$i]}
-		name=$(basename "$path" | sed 's/\.yml$//' | tr - _)
-		names+=($name)
-		pod_name=$(echo $name | tr _ -)
-		pod_names+=($pod_name)
-		export "${name}_host=$pod_name"
-		export "${name}_name=$pod_name"
-		if [ -f "$cloud_build_path/$name/Dockerfile" ]; then
-			if [ $cloud_context = local ]; then
-				host=registry.cloud
-			else
-				host=$cloud_registry_host
-			fi
-			export "${name}_image=$host/$cloud_name/$cloud_env/$name"
-		fi
-	done
-	for i in ${!paths[@]}; do
-		path=${paths[$i]}
-		name=${names[$i]}
-		pod_name=${pod_names[$i]}
-		apply_path=$cloud_apply_path/${path#"$cloud_compile_path"/}
-		mkdir -p "$(dirname "$apply_path")"
-		echo "$(compile_tpl "$path" $name $pod_name)" >> "$apply_path"
-	done
-}
-
 compile_statics() {
 	local namespaces resources
 	if [ $1 != build ]; then
@@ -557,7 +499,7 @@ compile_statics() {
 }
 
 compile() {
-	local OPTIND OPTARG cache o paths path name target_path
+	local OPTIND OPTARG cache o paths path name target
 	begin Compiling YAMLs
 	cache=true
 	while getopts ':c:' o; do
@@ -568,92 +510,354 @@ compile() {
 		esac
 	done
 	shift $((OPTIND-1))
-	rm -rf "$cloud_compile_path" "$cloud_apply_path" 
-	mkdir -p "$cloud_compile_path"
-	paths=$(find "$cloud_deploy_path/base" "$cloud_deploy_path/$cloud_env" -name \*.yml)
+	rm -rf "$cloud_apply_path" 
+	mkdir -p "$cloud_apply_path"
+	compile_set_globals
 	case $1 in
 	build)
+		paths=$(find "$cloud_builds_path" -type d -depth 1)
 		while read path; do
-			name=$(basename "$path" | sed 's/\.yml//')
-			if [ -d "$cloud_build_path/$name" ]; then
-				target_path="$cloud_compile_path/$name.yml"
-				if [ $cloud_context = local ]; then
-					cat <<-YML > "$target_path"
-						apiVersion: v1
-						kind: Pod
-						metadata:
-						  name: {{ name }}-build
-						  labels:
-						    name: {{ name }}-build
-						    type: build
-						spec:
-						  restartPolicy: Never
-						  containers:
-						  - image: gcr.io/kaniko-project/executor:latest
-						    name: kaniko
-						    args:
-						    - --destination={{ image }}
-						    - --insecure
-						    - --context=/mnt
-						    - --dockerfile=/cloud/build/{{ name }}/Dockerfile
-						    - --build-arg=RAILS_ENV={{ cloud_env }}
-						    volumeMounts:
-						    - name: mnt
-						      mountPath: /mnt
-						  hostAliases:
-					    - ip: $vm_ip
-					      hostnames:
-					      - $cloud_registry_host
-						  volumes:
-						  - name: mnt
-						    hostPath:
-						      path: {{ app_path }}
-					YML
-				else
-					cat <<-YML > "$target_path"
-						apiVersion: v1
-						kind: Pod
-						metadata:
-						  name: {{ name }}-build
-						  labels:
-						    name: {{ name }}-build
-						    type: build
-						spec:
-						  restartPolicy: Never
-						  containers:
-						  - image: gcr.io/kaniko-project/executor:latest
-						    name: kaniko
-						    args:
-						    - --destination={{ image }}
-						    - --context=/mnt
-						    - --dockerfile=/cloud/build/{{ name }}/Dockerfile
-						    - --build-arg=RAILS_ENV={{ cloud_env }}
-						    volumeMounts:
-						    - name: mnt
-						      mountPath: /mnt
-						    - name: docker
-						      mountPath: /kaniko/.docker
-						  volumes:
-						  - name: mnt
-						    hostPath:
-						      path: {{ app_path }}
-						  - name: docker
-						    secret:
-						      secretName: kaniko-docker
-					YML
-				fi
-			fi
+			name=$(basename "$path")
+			compile_dockerfile $name
+			compile_kaniko $name
 		done <<< "$paths"
 	;;
 	deploy)
-		while read path; do
-			name=$(basename "$path")
-			cp "$path" "$cloud_compile_path/$name"
-		done <<< "$paths"
+		for name in ${cloud_pods[@]}; do
+			compile_$name $name
+		done
 	;;
 	esac
-	compile_tpls $1
 	compile_statics $1
+}
+
+compile_set_globals() {
+	local name pod_name image_name version_name
+	for name in ${cloud_pods[@]}; do
+		pod_name=$(echo $name | tr _ -)
+		export "${name}_host=$pod_name"
+		export "${name}_name=$pod_name"
+		version_name=${name}_version
+		if [ -d "$cloud_builds_path/$name" ]; then
+			export "${name}_from=chirb/$name:${!version_name}"
+			export "${name}_image=$cloud_registry_host/$cloud_name/$cloud_env/$name"
+		else
+			image_name=${name}_image
+			if [ -z ${!image_name} ]; then
+				export "${name}_image=$name:${!version_name}"
+			else
+				export "${name}_image=${!image_name}:${!version_name}"
+			fi
+		fi
+	done
+}
+
+compile_dockerfile() {
+	local dir_path dockerfile_path from build_path
+	dir_path="$cloud_dockerfiles_path/$1"
+	mkdir -p "$dir_path"
+	dockerfile_path="$dir_path/Dockerfile"
+	compile_set_vars $1 from
+	cat <<-DOCKER > "$dockerfile_path"
+		FROM $from
+
+		RUN /mnt/tmp/cloud/dockerfiles/$1/build
+	DOCKER
+	build_path="$dir_path/build"
+	cat <<-SH > "$build_path"
+		#!/bin/sh
+
+	SH
+	if [ $1 = rails ]; then
+		cat <<-SH >> "$build_path"
+			if [ "\$RAILS_ENV" = production ]; then
+				tar --exclude-from=/mnt/.dockerignore -C /mnt -cf - . | tar -C /rails -xf -
+			fi
+
+		SH
+	fi
+	cat <<-SH >> "$build_path"
+		/mnt/cloud/builds/$1/build
+
+	SH
+	chmod +x "$build_path"
+}
+
+compile_kaniko() {
+	local name image path
+	compile_set_vars $1 name image
+	path="$cloud_apply_path/$1.yml"
+	cat <<-YML > "$path"
+		apiVersion: v1
+		kind: Pod
+		metadata:
+		  name: $name-build
+		  labels:
+		    name: $name-build
+		    type: build
+		spec:
+		  restartPolicy: Never
+		  containers:
+		  - image: gcr.io/kaniko-project/executor:latest
+		    name: kaniko
+		    args:
+		    - --destination=$image
+		    - --context=/mnt
+		    - --dockerfile=/tmp/cloud/dockerfiles/$name/Dockerfile
+		    - --build-arg=RAILS_ENV=$cloud_env
+	YML
+	if [ $cloud_context = local ]; then
+		cat <<-YML >> "$path"
+			    - --insecure
+		YML
+	fi
+	cat <<-YML >> "$path"
+			    volumeMounts:
+			    - name: mnt
+			      mountPath: /mnt
+	YML
+	if [ $cloud_context != local ]; then
+		cat <<-YML >> "$path"
+			    - name: docker
+			      mountPath: /kaniko/.docker
+		YML
+	fi
+	cat <<-YML >> "$path"
+			  volumes:
+			  - name: mnt
+			    hostPath:
+			      path: $app_path
+	YML
+	if [ $cloud_context != local ]; then
+		cat <<-YML >> "$path"
+			  - name: docker
+			    secret:
+			      secretName: kaniko-docker
+		YML
+	fi
+	if [ $cloud_context = local ]; then
+		cat <<-YML >> "$path"
+			  hostAliases:
+			  - ip: $vm_ip
+			    hostnames:
+			    - $cloud_registry_host
+		YML
+	fi
+}
+
+compile_mysql() {
+	local name pass db
+	compile_set_vars $1 pass db
+	compile_service $1
+	compile_deployment \
+	-e MYSQL_ROOT_PASSWORD:$pass \
+	-e MYSQL_DATABASE:$db \
+	-v $1:/var/lib/mysql \
+	$1
+}
+
+compile_service() {
+	local port
+	compile_set_vars $1 port
+	cat <<-YML > "$cloud_apply_path/$1-service.yml"
+		apiVersion: v1
+		kind: Service
+		metadata:
+		  name: $1
+		  labels:
+		    name: $1
+		spec:
+		  selector:
+		    name: $1
+		  ports:
+		  - name: $1
+		    port: $port
+		    nodePort: null
+	YML
+}
+
+compile_deployment() {
+	local OPTIND OPTARG o path replicas strategy image pull_policy port \
+	envs env env_name env_value rails data vols vol vol_name vol_path
+	while getopts ':e:v:' o; do
+		case "$o" in
+		e)
+			envs+="$OPTARG "
+		;;
+		v)
+			vols+="$OPTARG "
+		;;
+		esac
+	done
+	shift $((OPTIND-1))
+	compile_set_vars $1 replicas strategy image pull_policy port
+	path="$cloud_apply_path/$1-deployment.yml"
+	cat <<-YML > "$path"
+		apiVersion: apps/v1
+		kind: Deployment
+		metadata:
+		  name:  $1
+		  labels:
+		    name: $1
+		spec:
+		  replicas: $replicas
+		  strategy:
+		    type: $strategy
+		  selector:
+		    matchLabels:
+		      name: $1
+		  template:
+		    metadata:
+		      labels:
+		        name: $1
+		    spec:
+	YML
+	if [ $cloud_context != local ]; then
+		cat <<-YML >> "$path"
+        imagePullSecrets:
+          - name: $cloud_pull_secret
+		YML
+	fi
+	cat <<-YML >> "$path"
+		      containers:
+		      - image: $image
+		        imagePullPolicy: $pull_policy
+		        name: $1
+		        tty: true
+		        stdin: true
+	YML
+	if [ ! -z $port ]; then
+		cat <<-YML >> "$path"
+		        readinessProbe:
+		          tcpSocket:
+		            port: $port
+		          initialDelaySeconds: 30
+		          failureThreshold: 15
+		YML
+	fi
+	if [ ! -z "$envs" ]; then
+		cat <<-YML >> "$path"
+		        env:
+		YML
+		for env in $envs; do
+			env_name=$(echo $env | cut -d : -f 1)
+			env_value=$(echo $env | cut -d : -f 2)
+			cat <<-YML >> "$path"
+				        - name: $env_name
+				          value: '$env_value'
+			YML
+		done
+	fi
+	if [ ! -z "$vols" ]; then
+		cat <<-YML >> "$path"
+		        volumeMounts:
+		YML
+		for vol in $vols; do
+			if [ $vol = rails ]; then
+				rails=true
+				cat <<-YML >> "$path"
+					        - mountPath: /rails
+					          name: rails
+				YML
+			else
+				data=true
+				vol_path=$(echo $vol | cut -d : -f 2)
+				vol_name=$(echo $vol | cut -d : -f 1)
+				cat <<-YML >> "$path"
+					        - mountPath: $vol_path
+					          name: data
+					          subPath: $vol_name
+				YML
+			fi
+		done
+		cat <<-YML >> "$path"
+			      volumes:
+		YML
+		if [ "$rails" = true ]; then
+			cat <<-YML >> "$path"
+			      - name: rails
+			        hostPath:
+			          path: $app_path
+			YML
+		fi
+		if [ "$data" = true ]; then
+			cat <<-YML >> "$path"
+			      - name: data
+			        persistentVolumeClaim:
+			          claimName: data
+			YML
+		fi
+	fi
+}
+
+compile_redis() {
+	compile_service $1
+	compile_deployment \
+	-v $1:/data \
+	$1
+}
+
+compile_hub() {
+	compile_service $1
+	compile_deployment $1
+}
+
+compile_chrome() {
+	compile_deployment \
+	-e GRID_HUB_HOST:hub \
+	-v rails \
+	$1
+}
+
+compile_rails() {
+	local redis_url rails_url db_host_var db_port_var db_user_var db_pass_var
+	db_host_name=${cloud_db}_host
+	db_port_name=${cloud_db}_port
+	db_user_name=${cloud_db}_user
+	db_pass_name=${cloud_db}_pass
+	compile_set_vars $1 rails_master_key rails_threads_min rails_threads_max \
+	rails_workers $db_host_name $db_port_name $db_user_name $db_pass_name
+	redis_url=redis://$redis_host:$redis_port
+	rails_url=/$cloud_name/$cloud_env
+	compile_service $1
+	compile_deployment \
+	-e RAILS_MASTER_KEY:$rails_master_key \
+	-e RAILS_ENV:$cloud_env \
+	-e RAILS_THREADS_MIN:$rails_threads_min \
+	-e RAILS_THREADS_MAX:$rails_threads_max \
+	-e RAILS_WORKERS:$rails_workers \
+	-e DB_HOST:${!db_host_name} \
+	-e DB_PORT:${!db_port_name} \
+	-e DB_USER:${!db_user_name} \
+	-e DB_PASS:${!db_pass_name} \
+	-e REDIS_URL:$redis_url \
+	-e RAILS_RELATIVE_URL_ROOT:$rails_url \
+	-v rails \
+	$1
+}
+
+compile_get_var() {
+	local original_var cloud_var pod_var target_var
+	original_var=$2
+	cloud_var=cloud_$2
+	pod_var=$1_$2
+	if [ ! -z "${!pod_var}" ]; then
+		target_var=$pod_var
+	elif [ ! -z "${!cloud_var}" ]; then
+		target_var=$cloud_var
+	elif [ ! -z "${!original_var}" ]; then
+		target_var=$original_var
+	fi
+	echo ${!target_var}
+}
+
+compile_set_vars() {
+	local pod var
+	pod=$1
+	shift
+	for var in $@; do
+		export "$var=$(compile_get_var $pod $var)"
+	done
 }
 
 # CLOUD 
@@ -723,18 +927,20 @@ cloud_load() {
 }
 
 cloud_boot() {
+	local name
 	read_ini "$cloud_context_path"
-	read_ini "$cloud_base_path"
-	read_ini "$cloud_env_path"
+	read_ini -p "$cloud_base_path"
+	read_ini -p "$cloud_env_path"
 	cloud_id=$cloud_name-$cloud_env
 	if [ $cloud_context = local ]; then
-		cloud_relative_path=/$cloud_name/$cloud_env
 		cloud_domain=cloud
 		cloud_host=$cloud_domain
-		cloud_registry_host=registry.$cloud_domain
+	fi
+	cloud_registry_host=registry.$cloud_domain
+	if [ $cloud_context = local ]; then
+		cloud_relative_path=/$cloud_name/$cloud_env
 	else
 		cloud_relative_path=/
-		cloud_registry_host=registry.$cloud_domain
 		cloud_docker_config=$(cat <<-JSON
 				{
 				  "auths": {
@@ -807,18 +1013,19 @@ cloud_set_globals() {
 	if [ -z $cloud_context ]; then
 		cloud_context=${CLOUD_CONTEXT:-local}
 	fi
-	cloud_pull=Always
+	cloud_pull_policy=Always
 	cloud_access_mode=ReadWriteOnce
 	if [ $cloud_context = local ]; then
 		cloud_storage_class=local-path
 	else
 		cloud_pull_secret=registry-docker
 	fi
+	cloud_pods=()
 }
 
 cloud_set_vars() {
 	local OPTIND OPTARG o
-	cloud_db=postgres
+	cloud_db=${cloud_db:-postgres}
 	while getopts ':c:e:d:' o; do
 		case "$o" in
 		c)
@@ -863,22 +1070,22 @@ cloud_set_vars() {
 	cloud_contexts_path=$cloud_path/contexts
 	cloud_local_path=$cloud_contexts_path/local
 	cloud_context_path=$cloud_contexts_path/$cloud_context
-	cloud_envs_path=$cloud_path/envs
+	cloud_envs_path=$cloud_path/environments
 	cloud_base_path=$cloud_envs_path/base
 	cloud_dev_path=$cloud_envs_path/development
 	cloud_prod_path=$cloud_envs_path/production
 	cloud_env_path=$cloud_envs_path/$cloud_env
 	cloud_tmp_path=$app_path/tmp/cloud
 	cloud_kubeconfig_path=$cloud_tmp_path/kubeconfig
-	cloud_compile_path=$cloud_tmp_path/compile
 	cloud_apply_path=$cloud_tmp_path/apply
+	cloud_dockerfiles_path=$cloud_tmp_path/dockerfiles
 	cloud_kaniko_docker_path=$cloud_apply_path/kaniko-docker.yml
 	cloud_registry_docker_path=$cloud_apply_path/registry-docker.yml
 	cloud_namespace_path=$cloud_apply_path/namespace.yml
 	cloud_data_path=$cloud_apply_path/data.yml
 	cloud_volume_path=$cloud_apply_path/volume.yml
 	cloud_kustomization_path=$cloud_apply_path/kustomization.yml
-	cloud_build_path=$cloud_path/build
+	cloud_builds_path=$cloud_path/builds
 	cloud_deploy_path=$cloud_path/deploy
 	cloud_snippets_path=$cloud_deploy_path/snippets
 	cloud_samples_path=$cloud_tmp_path/samples
@@ -1057,7 +1264,6 @@ cloud_generate() {
 			cloud_generate_dir
 		fi
 		add_conf "$cloud_base_path" cloud_name
-		add_conf "$cloud_base_path" cloud_db
 	else
 		echo Already generated
 	fi

@@ -1,3 +1,11 @@
 #!/bin/sh
 
+apt update
+apt install \
+libmariadb-dev \
+mariadb-client \
+libpq-dev \
+postgresql-client \
+graphicsmagick
+
 cp /mnt/start /bin
