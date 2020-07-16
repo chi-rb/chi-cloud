@@ -46,6 +46,7 @@ user_disk_path=$user_cloud_path/disk.img
 
 vm_user=root
 vm_name=cloud
+vm_host=$vm_name
 vm_mem=4G
 vm_cpus=4
 vm_id=3646C502-7C09-4259-B71D-4B4BB447D6A6
@@ -1876,6 +1877,7 @@ envs_help() {
 
 vm_shell() {
 	xhyve_ensure
+	vm_load
 	vm_ssh
 }
 
@@ -1889,15 +1891,17 @@ vm_ssh() {
 		-o ControlPath=/tmp/%r@%h
 		-o UserKnownHostsFile=/dev/null
 		-o StrictHostKeyChecking=no
-		$vm_user@$vm_name
+		$vm_user@$vm_host
 	SSH
 	)
 	if [ $# -gt 0 ] || [ ! -t 0 ]; then
-		case $PWD in
-		$HOME*)
-			cd="cd '$PWD' >/dev/null 2>&1"
-		;;
-		esac
+		if [ $cloud_context = local ]; then
+			case $PWD in
+			$HOME*)
+				cd="cd '$PWD' >/dev/null 2>&1"
+			;;
+			esac
+		fi
 		if [ $# -gt 0 ]; then
 			cmd=$@
 		else
@@ -2098,6 +2102,9 @@ vm_config() {
 
 vm_start() {
 	begin Starting Virtual Machine
+	if [ "$1" != nested ]; then
+		vm_load
+	fi
 	if ! xhyve_running; then
 		xhyve_start
 	else
@@ -2110,6 +2117,9 @@ vm_start() {
 
 vm_stop() {
 	begin Stopping Virtual Machine
+	if [ "$1" != nested ]; then
+		vm_load
+	fi
 	if xhyve_running; then
 		xhyve_stop
 	else
@@ -2122,6 +2132,7 @@ vm_stop() {
 
 vm_restart() {
 	begin Restarting Virtual Machine
+	vm_load
 	vm_stop nested
 	vm_start nested
 	complete
@@ -2129,6 +2140,7 @@ vm_restart() {
 
 vm_exec() {
 	xhyve_ensure
+	vm_load
 	if [ $# -gt 1 ] && [ "$1" = -- ]; then
 		shift
 	else
@@ -2148,6 +2160,7 @@ vm_update_packages() {
 vm_update_k3s() {
 	local regex current_version latest_version url
 	begin Updating K3S
+	vm_load
 	regex='v[0-9]+\.[0-9]+\.[0-9]+\+k3s.?[0-9]+'
 	current_version=$(vm_ssh k3s -v | grep -oE $regex)
 	latest_version=$(curl -s $k3s_latest_url | grep -oE $regex | head -n1)
@@ -2164,8 +2177,19 @@ vm_update_k3s() {
 	fi
 }
 
+vm_load() {
+	if [ ! -z $CLOUD_CONTEXT ] && [ $CLOUD_CONTEXT != local ]; then
+		cloud_load
+		vm_user=ubuntu
+		vm_host=$cloud_ip
+	else
+		cloud_set_globals
+	fi
+}
+
 vm_update() {
 	xhyve_ensure
+	vm_load
 	vm_update_packages
 	vm_update_k3s
 	complete
