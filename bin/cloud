@@ -393,6 +393,12 @@ xhyve_start() {
 	xhyve_wait_k8s "$@"
 }
 
+xhyve_pid() {
+	local pid
+	pid=$(cat $user_pid_path)
+	pgrep -P $pid
+}
+
 xhyve_starting() {
 	! $(vm_ssh kubectl get pods >/dev/null 2>&1)
 }
@@ -428,10 +434,8 @@ xhyve_wait_pid() {
 }
 
 xhyve_running() {
-	local vm_pid
 	if [ -f $user_pid_path ]; then
-		vm_pid=$(cat $user_pid_path)
-		ps -p $vm_pid >/dev/null 2>&1
+		ps -p $(xhyve_pid) >/dev/null 2>&1
 	else
 		return 1
 	fi
@@ -2023,8 +2027,8 @@ vm_install() {
 	vm_init
 	vm_create_disks
 	vm_first_start
-	vm_share_home
 	cloud_set_globals
+	vm_share_home
 	cloud_config
 	if [ "$1" != nested ]; then
 		complete
@@ -2268,7 +2272,6 @@ aws_config() {
 		echo Already configured
 	fi
 }
-
 
 aws_create_cloud() {
 	aws_config
