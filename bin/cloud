@@ -1099,14 +1099,26 @@ cloud_set_vars() {
 	)
 }
 
+cloud_rev() {
+	git -C $1 rev-parse HEAD
+}
+
 cloud_clone() {
 	begin Cloning Repository
+	local current_rev new_rev
+	mkdir -p $tmp_path
+	git clone git@github.com:chi-rb/chi-cloud.git --single-branch --branch $branch $tmp_repo_path
 	if [ ! -d $repo_path ]; then
-		mkdir -p $tmp_path
-		git clone git@github.com:chi-rb/chi-cloud.git --single-branch --branch $branch $tmp_repo_path
 		sudo mv $tmp_repo_path $repo_path
 	else
-		echo Already cloned
+		current_rev=$(cloud_rev $repo_path)
+		new_rev=$(cloud_rev $tmp_repo_path)
+		if [ $current_rev != $new_rev ]; then
+			rm -rf $tmp_path
+			error "\nSeems you're changing Cloud's version, please run \"cloud uninstall\" first"
+		else
+			echo Already cloned
+		fi
 	fi
 }
 
@@ -1982,11 +1994,11 @@ vm_first_start() {
 	if host_exists; then
 		xhyve_ensure
 	else
-		mkdir -p $tmp_path
-		nc -l 1234 > $tmp_conf_path &
 		if xhyve_running; then
 			xhyve_stop
 		fi
+		mkdir -p $tmp_path
+		nc -l 1234 > $tmp_conf_path &
 		xhyve_spawn
 		while [ -z "$(cat $tmp_conf_path)" ]; do
 			printf .
