@@ -1103,10 +1103,14 @@ cloud_rev() {
 	git -C $1 rev-parse HEAD
 }
 
+cloud_clean_tmp() {
+	rm -rf $tmp_path
+	mkdir -p $tmp_path
+}
+
 cloud_clone() {
 	begin Cloning Repository
 	local current_rev new_rev
-	mkdir -p $tmp_path
 	git clone git@github.com:chi-rb/chi-cloud.git --single-branch --branch $branch $tmp_repo_path
 	if [ ! -d $repo_path ]; then
 		sudo mv $tmp_repo_path $repo_path
@@ -1177,6 +1181,7 @@ cloud_delete_bins() {
 }
 
 cloud_install() {
+	cloud_clean_tmp
 	cloud_clone
 	cloud_add_bins
 	cloud_authorize_terminal
