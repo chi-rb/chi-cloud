@@ -428,7 +428,7 @@ xhyve_wait_pid() {
 }
 
 xhyve_running() {
-	local vim_pid
+	local vm_pid
 	if [ -f $user_pid_path ]; then
 		vm_pid=$(cat $user_pid_path)
 		ps -p $vm_pid >/dev/null 2>&1
