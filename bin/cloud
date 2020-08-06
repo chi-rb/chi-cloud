@@ -493,6 +493,7 @@ compile_statics() {
 		  name: $cloud_id
 		  labels:
 		    name: $cloud_id
+		    type: app
 	YML
 	namespaces=$(find "$cloud_apply_path" -type d -mindepth 1 -maxdepth 1 | xargs basename)
 	resources=$(ls "$cloud_apply_path" | sed 's/^/  - /g')
@@ -613,7 +614,7 @@ compile_kaniko() {
 	YML
 	if [ $cloud_context = local ]; then
 		cat <<-YML >> "$path"
-			    - --insecure
+		    - --insecure
 		YML
 	fi
 	cat <<-YML >> "$path"
@@ -836,7 +837,6 @@ compile_rails() {
 	-e DB_USER:${!db_user_name} \
 	-e DB_PASS:${!db_pass_name} \
 	-e REDIS_URL:$redis_url \
-	-e RAILS_RELATIVE_URL_ROOT:$rails_url \
 	-v rails \
 	$1
 }
@@ -1302,11 +1302,11 @@ cloud_open() {
 	local url
 	cloud_load
 	if [ $cloud_context = local ]; then
-		url=$vm_name/$cloud_name/$cloud_env
+		url=$cloud_name.$cloud_env.$cloud_host
 	else
 		url=$cloud_host
 	fi
-	open http://$url
+	open https://$url
 }
 
 cloud_bin() {
@@ -1348,6 +1348,7 @@ cloud_copy() {
 cloud_delete_namespace() {
 	begin Deleting Namespace
 	vm_kubectl delete namespace $cloud_id
+	cloud_refresh_hosts
 }
 
 cloud_delete_dir() {
@@ -1403,10 +1404,28 @@ cloud_build() {
 	complete
 }
 
+cloud_refresh_hosts() {
+	local namespaces namespace line name env subdomain
+	namespaces=$(kubectl get namespaces -l type=app -o jsonpath={.items[0].metadata.name})
+	line=$(echo $vm_ip $vm_name registry.$vm_name)
+	for namespace in $namespaces; do
+		name=$(echo $namespace | rev | cut -d - -f 2- | rev)
+		env=$(echo $namespace | rev | cut -d - -f 1 | rev)
+		if [ $env = development ]; then
+			for subdomain in $env test; do
+				line+=" $name.$subdomain.$vm_name"
+			done
+		fi
+	done
+	vm_delete_host_line
+	vm_add_host_line $line
+}
+
 cloud_deploy() {
 	cloud_load
 	compile deploy
 	cloud_apply
+	cloud_refresh_hosts
 	complete
 }
 
@@ -1567,6 +1586,9 @@ cloud_config() {
 			  - name: http
 			    port: 80
 			    targetPort: 80
+			  - name: https
+			    port: 443
+			    targetPort: 443
 			---
 			apiVersion: apps/v1
 			kind: Deployment
@@ -1585,7 +1607,7 @@ cloud_config() {
 			    spec:
 			      containers:
 			      - name: ingress
-			        image: chirb/nginx:1.18.0
+			        image: chirb/nginx:1.14.0
 			        imagePullPolicy: Always
 			        env:
 			        - name: CLOUD_CONTEXT
@@ -1594,16 +1616,15 @@ cloud_config() {
 			          value: registry.cloud
 			        volumeMounts:
 			        - name: data
-			          mountPath: /etc/letsencrypt
-			          subPath: letsencrypt
+			          mountPath: /ssl
+			          subPath: ssl
 			      volumes:
 			      - name: data
 			        persistentVolumeClaim:
 			          claimName: data
 		YML
 	else
-		#htpasswd=$(cloud_gen_registry_auth)
-		htpasswd=$(htpasswd -Bbn $cloud_registry_user $cloud_registry_pass)
+		htpasswd=$(cloud_gen_registry_auth)
 		cat <<-YML | vm_kubectl apply -f -
 			apiVersion: v1
 			kind: Secret
@@ -1711,8 +1732,8 @@ cloud_config() {
 			          value: '$cloud_dns_pass'
 			        volumeMounts:
 			        - name: data
-			          mountPath: /etc/letsencrypt
-			          subPath: letsencrypt
+			          mountPath: /ssl
+			          subPath: ssl
 			      volumes:
 			      - name: data
 			        persistentVolumeClaim:
@@ -1994,11 +2015,16 @@ vm_init() {
 	fi
 }
 
-vm_add_host() {
-	echo $vm_ip $vm_name registry.$vm_name | sudo tee -a $hosts_path
+vm_delete_host_line() {
+	delete_line -s $hosts_path $vm_name
+}
+
+vm_add_host_line() {
+	echo $@ | sudo tee -a $hosts_path
 }
 
 vm_first_start() {
+	local line
 	begin First Start
 	if host_exists; then
 		xhyve_ensure
@@ -2017,7 +2043,8 @@ vm_first_start() {
 		add_conf $user_conf_path mac_ip
 		add_conf $user_conf_path vm_ip
 		rm $tmp_conf_path
-		vm_add_host
+		line="$vm_ip $vm_name registry.$vm_name"
+		vm_add_host_line $line
 		xhyve_wait_k8s
 	fi
 }

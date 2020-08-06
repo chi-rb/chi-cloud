@@ -5,4 +5,7 @@ apt install \
 certbot \
 python3-certbot-dns-cloudflare
 
+mkdir -p /ssl/self-signed /ssl/letsencrypt
+ln -s /ssl/letsencrypt /etc/letsencrypt/live
+
 cp /mnt/issue-cert /bin

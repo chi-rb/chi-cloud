@@ -1,0 +1,50 @@
+#!/bin/sh
+
+ssl_path=/ssl
+
+if [ $CLOUD_CONTEXT = local ]; then
+	cert_path=$ssl_path/fullchain.pem
+	key_path=$ssl_path/privkey.pem
+
+	cert_valid() {
+		openssl x509 \
+		-checkend 86400 \
+		-noout \
+		-in $cert_path
+	}
+
+	if [ ! -f $cert_path ] || ! cert_valid; then
+		openssl req \
+		-nodes \
+		-new -x509 \
+		-days 365 \
+		-out $cert_path \
+		-keyout $key_path \
+		-subj '/C=UY/ST=Maldonado/L=Punta del Este/O=IT/CN=*.cloud'
+	fi
+else
+	ini_path=/tmp/cloudflare.ini
+	live_path=/etc/letsencrypt/live/$CLOUD_DOMAIN
+
+	if [ -d $live_path ]; then
+		certbot renew
+	else
+		cat <<-INI > $ini_path
+		dns_cloudflare_email = $DNS_USER
+		dns_cloudflare_api_key = $DNS_PASS
+		INI
+
+		opts="-d $CLOUD_DOMAIN"
+		if echo $CLOUD_DOMAIN | grep -qE '^[a-z]+\.[a-z]+$'; then
+			opts="$opts -d *.$CLOUD_DOMAIN"
+		fi
+
+		certbot certonly \
+		$opts \
+		-n \
+		--agree-tos \
+		--email $DNS_USER \
+		--dns-cloudflare \
+		--dns-cloudflare-credentials $ini_path
+	fi
+fi

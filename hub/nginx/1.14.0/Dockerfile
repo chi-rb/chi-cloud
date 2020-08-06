@@ -1,4 +1,4 @@
-FROM chirb/letsencrypt
+FROM chirb/ssl
 
 RUN /mnt/compile
 
