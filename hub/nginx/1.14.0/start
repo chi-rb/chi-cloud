@@ -11,9 +11,8 @@ resolver_ip=10.43.0.10
 if [ $CLOUD_CONTEXT = local ]; then
 	cert_path=$ssl_path/fullchain.pem
 	key_path=$ssl_path/privkey.pem
-	server_name='~^(?<app>.+)\.(?<env>development|test)\.cloud\$'
-	redirect_domain='~^www\.(?<app>.+)\.(?<env>development|test)\.cloud\$'
-	main_domain='$app.$env.cloud'
+	server_name='~^(?<app>.+)\-(?<env>.+)\.cloud\.local$'
+	main_domain='$app-$env.cloud.local'
 else
 	letsencrypt_path=$ssl_path/live/$CLOUD_DOMAIN
 	cert_path=$letsencrypt_path/fullchain.pem
@@ -52,63 +51,52 @@ cat <<-CONF > $site_path
 	$redirect
 	}
 
-	server {
-	  server_name $redirect_domain;
-	$https
-	$redirect
-	}
+CONF
 
+add_rails() {
+	cat <<-CONF >> $site_path
+		server {
+		  server_name ~^(?<app>.+)\-$1\.cloud\.local$;
+		$https
+
+		  location / {
+		    resolver $resolver_ip;
+		    include $proxy_path;
+		    proxy_pass http://rails.$2-$3.svc.cluster.local:$4;
+		  }
+		}
+
+	CONF
+}
+
+if [ $CLOUD_CONTEXT = local ]; then
+	add_rails development \$app development 80
+	add_rails test \$app development 3000
+	add_rails '(?<env>.+)' \$app \$env 80
+else
+	cat <<-CONF >> $site_path
+		server {
+			server_name $redirect_domain;
+		$https
+		$redirect
+		}
+
+	CONF
+	add_rails $server_name $CLOUD_NAME production 80
+fi
+
+cat <<-CONF >> $site_path
 	server {
 	  server_name $CLOUD_REGISTRY_HOST;
 	$https
 
 	  location / {
-	    include /etc/nginx/conf.d/proxy.conf;
+	    resolver $resolver_ip;
+	    include $proxy_path;
 	    proxy_pass http://registry.default.svc.cluster.local:5000;
 	  }
 	}
 CONF
-
-if [ $CLOUD_CONTEXT = local ]; then
-	cat <<-CONF >> $site_path
-
-		server {
-		  server_name ~^(?<app>.+)\.development\.cloud$;
-		$https
-
-		  location / {
-		    resolver $resolver_ip;
-		    include $proxy_path;
-		    proxy_pass http://rails.\$app-development.svc.cluster.local:80;
-		  }
-		}
-
-		server {
-		  server_name ~^(?<app>.+)\.test\.cloud$;
-		$https
-
-		  location / {
-		    resolver $resolver_ip;
-		    include $proxy_path;
-		    proxy_pass http://rails.\$app-development.svc.cluster.local:3000;
-		  }
-		}
-	CONF
-else
-	cat <<-CONF >> $site_path
-
-		server {
-		  server_name $server_name;
-		$https
-
-		  location / {
-		    resolver $resolver_ip;
-		    include $proxy_path;
-		    proxy_pass http://rails.$CLOUD_NAME-production.svc.cluster.local;
-		  }
-		}
-	CONF
-fi
 
 issue-cert
 nginx -g 'daemon off;'
