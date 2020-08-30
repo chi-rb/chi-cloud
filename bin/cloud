@@ -3,7 +3,7 @@
 # SETTINGS
 
 pid=$$
-branch=dev
+branch=master
 wait_count=15
 hosts_path=/etc/hosts
 nfsd_path=/sbin/nfsd
