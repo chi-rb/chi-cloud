@@ -636,8 +636,9 @@ compile_mysql() {
 
 compile_service() {
 	local port
-	compile_set_vars $1 port
-	cat <<-YML > "$cloud_apply_path/$1-service.yml"
+	compile_set_vars $1 port path
+	path="$cloud_apply_path/$1-service.yml"
+	cat <<-YML > $path
 		apiVersion: v1
 		kind: Service
 		metadata:
@@ -652,6 +653,13 @@ compile_service() {
 		    port: $port
 		    nodePort: null
 	YML
+	if [ $cloud_context = local ] && [ $1 = rails ]; then
+		cat <<-YML >> $path
+			  - name: capybara
+			    port: 3000
+			    nodePort: null
+		YML
+	fi
 }
 
 compile_deployment() {
@@ -766,6 +774,14 @@ compile_deployment() {
 			YML
 		fi
 	fi
+  if [ $cloud_context = local ]; then
+		cat <<-YML >> "$path"
+			      hostAliases:
+			      - ip: $vm_ip
+			        hostnames:
+			        - ${cloud_name}-test.$vm_name
+		YML
+  fi
 }
 
 compile_redis() {
@@ -799,6 +815,7 @@ compile_rails() {
 	rails_url=/$cloud_name/$cloud_env
 	compile_service $1
 	compile_deployment \
+	-e CLOUD_NAME:$cloud_name \
 	-e RAILS_MASTER_KEY:$rails_master_key \
 	-e RAILS_ENV:$cloud_env \
 	-e RAILS_THREADS_MIN:$rails_threads_min \
@@ -993,7 +1010,7 @@ cloud_set_globals() {
 	cloud_pull_policy=Always
 	cloud_access_mode=ReadWriteOnce
 	if [ $cloud_context = local ]; then
-		cloud_domain=cloud.local
+		cloud_domain=$vm_name
 		cloud_host=$cloud_domain
 		cloud_set_registry_host
 		cloud_storage_class=local-path
@@ -1380,6 +1397,7 @@ cloud_build() {
 }
 
 cloud_refresh_hosts() {
+	begin Refreshing Hosts
 	local namespaces namespace line name env subdomain
 	namespaces=$(kubectl get namespaces -l type=app -o jsonpath={.items[0].metadata.name})
 	line=$(echo $vm_ip cloud $vm_name registry.$vm_name)
