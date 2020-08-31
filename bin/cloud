@@ -538,6 +538,7 @@ compile_dockerfile() {
 	compile_set_vars $1 from
 	cat <<-DOCKER > "$dockerfile_path"
 		FROM $from
+		ARG RAILS_ENV
 
 		RUN /mnt/tmp/cloud/dockerfiles/$1/build
 	DOCKER
@@ -549,7 +550,7 @@ compile_dockerfile() {
 	if [ $1 = rails ]; then
 		cat <<-SH >> "$build_path"
 			if [ "\$RAILS_ENV" = production ]; then
-				tar --exclude-from=/mnt/.dockerignore -C /mnt -cf - . | tar -C /rails -xf -
+			  tar --exclude-from=/mnt/.dockerignore -C /mnt -cf - . | tar -C /rails -xf -
 			fi
 
 		SH
@@ -621,6 +622,18 @@ compile_kaniko() {
 			    - $cloud_registry_host
 		YML
 	fi
+}
+
+compile_postgres() {
+	local name user pass db
+	compile_set_vars $1 user pass db
+	compile_service $1
+	compile_deployment \
+	-e POSTGRES_USER:$user \
+	-e POSTGRES_PASSWORD:$pass \
+	-e POSTGRES_DATABASE:$db \
+	-v $1:/var/lib/postgresql/data \
+	$1
 }
 
 compile_mysql() {
@@ -1399,7 +1412,7 @@ cloud_build() {
 cloud_refresh_hosts() {
 	begin Refreshing Hosts
 	local namespaces namespace line name env subdomain
-	namespaces=$(kubectl get namespaces -l type=app -o jsonpath={.items[0].metadata.name})
+	namespaces=$(kubectl get namespaces -l type=app -o jsonpath={.items[*].metadata.name})
 	line=$(echo $vm_ip cloud $vm_name registry.$vm_name)
 	for namespace in $namespaces; do
 		name=$(echo $namespace | rev | cut -d - -f 2- | rev)
