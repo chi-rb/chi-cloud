@@ -25,3 +25,4 @@ make install)
 rm -rf $path
 gem update --system --no-document
 gem install bundler --no-document
+bundle config build.nokogiri --use-system-libraries
