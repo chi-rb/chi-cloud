@@ -25,6 +25,9 @@ exports_path=/etc/exports
 exports_home_path=/System/Volumes/Data$HOME
 
 s3_url=https://chi-rb.s3.amazonaws.com
+if [ $branch = dev ]; then
+	s3_url+=/dev
+fi
 s3_initrd_url=$s3_url/initrd
 s3_vmlinuz_url=$s3_url/vmlinuz
 s3_disk_url=$s3_url/disk.img.xz
