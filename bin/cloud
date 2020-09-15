@@ -729,13 +729,23 @@ compile_deployment() {
 		        stdin: true
 	YML
 	if [ ! -z $port ]; then
-		cat <<-YML >> "$path"
+		if [ $1 = rails ]; then
+			cat <<-YML >> "$path"
 		        readinessProbe:
 		          tcpSocket:
 		            port: $port
 		          initialDelaySeconds: 30
 		          failureThreshold: 15
-		YML
+			YML
+		else
+			cat <<-YML >> "$path"
+		        readinessProbe:
+		          tcpSocket:
+		            port: $port
+		          initialDelaySeconds: 30
+		          failureThreshold: 15
+			YML
+		fi
 	fi
 	if [ ! -z "$envs" ]; then
 		cat <<-YML >> "$path"
@@ -1413,21 +1423,23 @@ cloud_build() {
 }
 
 cloud_refresh_hosts() {
-	begin Refreshing Hosts
-	local namespaces namespace line name env subdomain
-	namespaces=$(kubectl get namespaces -l type=app -o jsonpath={.items[*].metadata.name})
-	line=$(echo $vm_ip cloud $vm_name registry.$vm_name)
-	for namespace in $namespaces; do
-		name=$(echo $namespace | rev | cut -d - -f 2- | rev)
-		env=$(echo $namespace | rev | cut -d - -f 1 | rev)
-		if [ $env = development ]; then
-			for subdomain in $env test; do
-				line+=" $name-$subdomain.$vm_name"
-			done
-		fi
-	done
-	vm_delete_host_line
-	vm_add_host_line $line
+	if [ $cloud_context = local ]; then
+		begin Refreshing Hosts
+		local namespaces namespace line name env subdomain
+		namespaces=$(kubectl get namespaces -l type=app -o jsonpath={.items[*].metadata.name})
+		line=$(echo $vm_ip cloud $vm_name registry.$vm_name)
+		for namespace in $namespaces; do
+			name=$(echo $namespace | rev | cut -d - -f 2- | rev)
+			env=$(echo $namespace | rev | cut -d - -f 1 | rev)
+			if [ $env = development ]; then
+				for subdomain in $env test; do
+					line+=" $name-$subdomain.$vm_name"
+				done
+			fi
+		done
+		vm_delete_host_line
+		vm_add_host_line $line
+	fi
 }
 
 cloud_deploy() {
@@ -1720,7 +1732,7 @@ cloud_config() {
 			    spec:
 			      containers:
 			      - name: ingress
-			        image: chirb/nginx:1.18.0
+			        image: chirb/nginx:1.14.0
 			        imagePullPolicy: Always
 			        env:
 			        - name: CLOUD_NAME
@@ -1741,7 +1753,7 @@ cloud_config() {
 			          value: '$cloud_dns_pass'
 			        volumeMounts:
 			        - name: data
-			          mountPath: /ssl
+			          mountPath: /etc/letsencrypt
 			          subPath: ssl
 			      volumes:
 			      - name: data
@@ -2341,7 +2353,71 @@ fi
 
 case $1 in
 debug)
-	
+	cloud_load
+		cat <<-YML | vm_kubectl apply -f -
+			apiVersion: v1
+			kind: Service
+			metadata:
+			  name: ingress
+			  labels:
+			    name: ingress
+			spec:
+			  type: LoadBalancer
+			  selector:
+			    name: ingress
+			  ports:
+			  - name: http
+			    port: 80
+			    targetPort: 80
+			  - name: https
+			    port: 443
+			    targetPort: 443
+			---
+			apiVersion: apps/v1
+			kind: Deployment
+			metadata:
+			  name: ingress
+			  labels:
+			    name: ingress
+			spec:
+			  selector:
+			    matchLabels:
+			      name: ingress
+			  template:
+			    metadata:
+			      labels:
+			        name: ingress
+			    spec:
+			      containers:
+			      - name: ingress
+			        image: chirb/nginx:1.14.0
+			        imagePullPolicy: Always
+			        env:
+			        - name: CLOUD_NAME
+			          value: $cloud_name
+			        - name: CLOUD_CONTEXT
+			          value: $cloud_context
+			        - name: CLOUD_DOMAIN
+			          value: $cloud_domain
+			        - name: CLOUD_HOST
+			          value: $cloud_host
+			        - name: CLOUD_REGISTRY_HOST
+			          value: $cloud_registry_host
+			        - name: DNS_TYPE
+			          value: $cloud_dns_type
+			        - name: DNS_USER
+			          value: $cloud_dns_user
+			        - name: DNS_PASS
+			          value: '$cloud_dns_pass'
+			        volumeMounts:
+			        - name: data
+			          mountPath: /etc/letsencrypt
+			          subPath: ssl
+			      volumes:
+			      - name: data
+			        persistentVolumeClaim:
+			          claimName: data
+		YML
 ;;
 install)
 	cloud_install

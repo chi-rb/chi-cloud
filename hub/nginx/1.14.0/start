@@ -5,16 +5,16 @@ sites_path=$nginx_path/sites-enabled
 site_path=$sites_path/cloud
 conf_path=/etc/nginx/conf.d
 proxy_path=$conf_path/proxy.conf
-ssl_path=/ssl
 resolver_ip=10.43.0.10
 
 if [ $CLOUD_CONTEXT = local ]; then
+	ssl_path=/ssl
 	cert_path=$ssl_path/fullchain.pem
 	key_path=$ssl_path/privkey.pem
 	server_name='~^(?<app>.+)\-(?<env>.+)\.cloud\.local$'
 	main_domain='$app-$env.cloud.local'
 else
-	letsencrypt_path=$ssl_path/live/$CLOUD_DOMAIN
+	letsencrypt_path=/etc/letsencrypt/live/$CLOUD_DOMAIN
 	cert_path=$letsencrypt_path/fullchain.pem
 	key_path=$letsencrypt_path/privkey.pem
 	server_name=.$CLOUD_DOMAIN
