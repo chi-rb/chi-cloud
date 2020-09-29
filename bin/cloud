@@ -680,7 +680,7 @@ compile_service() {
 
 compile_deployment() {
 	local OPTIND OPTARG o path replicas strategy image pull_policy port \
-	envs env env_name env_value rails data vols vol vol_name vol_path
+	envs env env_name env_value host_path data vols vol vol_name vol_path
 	while getopts ':e:v:' o; do
 		case "$o" in
 		e)
@@ -716,8 +716,8 @@ compile_deployment() {
 	YML
 	if [ $cloud_context != local ]; then
 		cat <<-YML >> "$path"
-        imagePullSecrets:
-          - name: $cloud_pull_secret
+      imagePullSecrets:
+      - name: $cloud_pull_secret
 		YML
 	fi
 	cat <<-YML >> "$path"
@@ -766,7 +766,7 @@ compile_deployment() {
 		YML
 		for vol in $vols; do
 			if [ $vol = rails ]; then
-				rails=true
+				host_path=true
 				cat <<-YML >> "$path"
 					        - mountPath: /rails
 					          name: rails
@@ -785,7 +785,7 @@ compile_deployment() {
 		cat <<-YML >> "$path"
 			      volumes:
 		YML
-		if [ "$rails" = true ]; then
+		if [ "$host_path" = true ]; then
 			cat <<-YML >> "$path"
 			      - name: rails
 			        hostPath:
