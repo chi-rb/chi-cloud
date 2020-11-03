@@ -1109,8 +1109,6 @@ cloud_set_vars() {
 	cloud_volume_path=$cloud_apply_path/volume.yml
 	cloud_kustomization_path=$cloud_apply_path/kustomization.yml
 	cloud_builds_path=$cloud_path/builds
-	cloud_deploy_path=$cloud_path/deploy
-	cloud_snippets_path=$cloud_deploy_path/snippets
 	cloud_samples_path=$cloud_tmp_path/samples
 	cloud_sample_paths=(
 		config/puma.rb
@@ -1391,11 +1389,6 @@ cloud_destroy() {
 	complete
 }
 
-cloud_apply() {
-	begin Applying YAMLs
-	vm_kubectl apply -k \"$cloud_apply_path\"
-}
-
 cloud_clear_builds() {
 	begin Clearing Builds
 	cloud_kubectl delete pods -l type=build
@@ -1417,7 +1410,7 @@ cloud_build() {
 	fi
 	cloud_clear_builds
 	compile "$@" build
-	cloud_apply
+	cloud_apply nested
 	cloud_log_builds
 	complete
 }
@@ -1442,12 +1435,17 @@ cloud_refresh_hosts() {
 	fi
 }
 
-cloud_deploy() {
-	cloud_load
-	compile deploy
-	cloud_apply
-	cloud_refresh_hosts
-	complete
+cloud_apply() {
+	if [ "$1" != nested ]; then
+		cloud_load
+		compile deploy
+	fi
+	begin Applying YAMLs
+	vm_kubectl apply -k \"$cloud_apply_path\"
+	if [ "$1" != nested ]; then
+		cloud_refresh_hosts
+		complete
+	fi
 }
 
 cloud_restart() {
@@ -1777,8 +1775,7 @@ cloud_help() {
 			delete        Deletes only namespace
 			destroy       Deletes directory and purges
 			build         Builds docker images
-			deploy        Deploys application
-			undeploy      Undeploys application
+			apply         Applies infrastructure changes
 			status [pod]  Prints status of pods (all by default)
 			restart [pod] Restart pod (rails by default)
 			shell [pod]   Opens a shell in pod (rails by default)
@@ -2352,73 +2349,6 @@ if [ -f $user_conf_path ]; then
 fi
 
 case $1 in
-debug)
-	cloud_load
-		cat <<-YML | vm_kubectl apply -f -
-			apiVersion: v1
-			kind: Service
-			metadata:
-			  name: ingress
-			  labels:
-			    name: ingress
-			spec:
-			  type: LoadBalancer
-			  selector:
-			    name: ingress
-			  ports:
-			  - name: http
-			    port: 80
-			    targetPort: 80
-			  - name: https
-			    port: 443
-			    targetPort: 443
-			---
-			apiVersion: apps/v1
-			kind: Deployment
-			metadata:
-			  name: ingress
-			  labels:
-			    name: ingress
-			spec:
-			  selector:
-			    matchLabels:
-			      name: ingress
-			  template:
-			    metadata:
-			      labels:
-			        name: ingress
-			    spec:
-			      containers:
-			      - name: ingress
-			        image: chirb/nginx:1.14.0
-			        imagePullPolicy: Always
-			        env:
-			        - name: CLOUD_NAME
-			          value: $cloud_name
-			        - name: CLOUD_CONTEXT
-			          value: $cloud_context
-			        - name: CLOUD_DOMAIN
-			          value: $cloud_domain
-			        - name: CLOUD_HOST
-			          value: $cloud_host
-			        - name: CLOUD_REGISTRY_HOST
-			          value: $cloud_registry_host
-			        - name: DNS_TYPE
-			          value: $cloud_dns_type
-			        - name: DNS_USER
-			          value: $cloud_dns_user
-			        - name: DNS_PASS
-			          value: '$cloud_dns_pass'
-			        volumeMounts:
-			        - name: data
-			          mountPath: /etc/letsencrypt
-			          subPath: ssl
-			      volumes:
-			      - name: data
-			        persistentVolumeClaim:
-			          claimName: data
-		YML
-;;
 install)
 	cloud_install
 ;;
@@ -2452,8 +2382,8 @@ build)
 	shift
 	cloud_build "$@"
 ;;
-deploy)
-	cloud_deploy
+apply)
+	cloud_apply
 ;;
 restart)
 	cloud_restart $2
