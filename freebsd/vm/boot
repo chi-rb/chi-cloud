@@ -1,0 +1,13 @@
+#!/bin/sh
+
+sudo xhyve \
+-U 0AA89452-4787-4511-A89D-694ABA8BF0E1 \
+-A \
+-m 4G \
+-c 4 \
+-s 0,hostbridge \
+-s 2,virtio-net \
+-s 4,virtio-blk,disk.img \
+-s 31,lpc \
+-l com1,stdio \
+-f fbsd,userboot.so,disk.img,

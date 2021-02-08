@@ -1,0 +1,4 @@
+#!/bin/sh
+
+curl https://raw.githubusercontent.com/machyve/xhyve/master/test/userboot.so > userboot.so
+curl https://download.freebsd.org/ftp/releases/amd64/amd64/ISO-IMAGES/12.2/FreeBSD-12.2-RELEASE-amd64-bootonly.iso > install.iso
