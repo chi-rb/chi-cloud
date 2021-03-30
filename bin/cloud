@@ -338,7 +338,7 @@ mac_bin_authorized() {
 	fi
 	result=$(
 		sudo sqlite3 "$tcc_path" \
-		"select 0 from access where allowed=true and service=\"kTCCServiceSystemPolicyAllFiles\" and client=\"$client\"" 2>/dev/null
+		"select 0 from access where auth_value=2 and service=\"kTCCServiceSystemPolicyAllFiles\" and client=\"$client\"" 2>/dev/null
 	)
 	if [ $? = 1 ]; then
 		return 1
