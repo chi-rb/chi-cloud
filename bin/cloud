@@ -687,20 +687,26 @@ cloud_get_bin_names() {
 }
 
 cloud_add_bins() {
-	local name
-	for name in $(cloud_get_bin_names); do
-		path=$bin_path/$name
+	local path bin_name
+	for bin_name in $(cloud_get_bin_names); do
+		path=$bin_path/$bin_name
+		if [ $branch != master ]; then
+			path+=-$branch
+		fi
 		if [ ! -f $path ]; then
-			ln -s $repo_bin_path/$name $path
+			ln -s $repo_bin_path/$bin_name $path
 		fi
 	done
 }
 
 cloud_delete_bins() {
-	local name path
+	local path bin_name
 	if [ -d $repo_path ]; then
-		for name in $(cloud_get_bin_names); do
-			path=$bin_path/$name
+		for bin_name in $(cloud_get_bin_names); do
+			path=$bin_path/$bin_name
+			if [ $branch != master ]; then
+				path+=-$branch
+			fi
 			if [ -f $path ]; then
 				rm $path
 			fi
