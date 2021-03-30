@@ -505,7 +505,6 @@ cmd_cloud_install() {
 	mac_authorize_nfsd
 	begin Authorizing XHYVE
 	mac_authorize_xhyve
-	vm_install
 }
 
 cmd_cloud_uninstall() {
@@ -515,7 +514,6 @@ cmd_cloud_uninstall() {
 	cloud_delete_bins
 	begin Deleting Cloud
 	cloud_delete_repo
-	vm_uninstall
 }
 
 cmd_cloud_update() {
@@ -2167,9 +2165,11 @@ bin)
 ;;
 install)
 	cmd_cloud_install
+	cmd_vm_install
 ;;
 uninstall)
 	cmd_cloud_uninstall
+	cmd_vm_uninstall
 ;;
 update)
 	cmd_cloud_update
