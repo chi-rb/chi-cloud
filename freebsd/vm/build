@@ -1,3 +1,0 @@
-#!/bin/sh
-
-mkfile 20G disk.img

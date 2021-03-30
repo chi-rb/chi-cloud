@@ -1,23 +1,9 @@
 .DS_Store
 
+vm/userboot.so
+vm/install.iso
 vm/disk.img
 vm/disk.img.xz
 vm/disk.img.bak
-vm/ubuntu.img
-vm/ubuntu.img.xz
-vm/ubuntu.img.bak
-vm/blank.img
-vm/blank.img.xz
-vm/blank.img.bak
-vm/k3s.img
-vm/k3s.img.xz
-vm/k3s.img.bak
-vm/install.img.bak
-vm/install.img
-vm/seed.img.bak
-vm/seed.img
-vm/vmlinuz
-vm/initrd
-vm/freebsd
 
 tmp

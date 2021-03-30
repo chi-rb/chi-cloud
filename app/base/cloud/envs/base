@@ -1,5 +1,0 @@
-[redis]
-image = redis:5.0
-port = 6379
-storage = 200Mi
-url = redis://$redis_host:$redis_port

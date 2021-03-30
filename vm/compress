@@ -1,3 +1,4 @@
 #!/bin/sh
 
+rm disk.img.xz
 tar cJvf disk.img.xz disk.img

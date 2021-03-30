@@ -1,7 +1,0 @@
-#!/bin/sh
-
-rm -f \
-userboot.so \
-install.iso \
-disk.img \
-disk.img.xz

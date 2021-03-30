@@ -1,9 +1,7 @@
 #!/bin/sh
 
 rm -f \
-install.img \
-initrd \
-vmlinuz \
+userboot.so \
+install.iso \
 disk.img \
-disk.img.xz \
-seed.img
+disk.img.xz

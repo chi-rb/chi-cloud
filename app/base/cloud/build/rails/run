@@ -1,5 +1,0 @@
-#!/bin/sh
-
-if [ "$RAILS_ENV" = production ]; then
-  tar --exclude-from=/mnt/.dockerignore -C /mnt -cf - . | tar -C /rails -xf -
-fi

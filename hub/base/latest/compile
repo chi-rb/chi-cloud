@@ -1,7 +1,0 @@
-#!/bin/sh
-
-echo 'APT::Get::Assume-Yes "true";' \
-> /etc/apt/apt.conf.d/local
-
-apt update
-apt install vim

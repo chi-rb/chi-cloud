@@ -1,0 +1,3 @@
+map $wanted_host $wanted_ip {
+  include /usr/local/etc/nginx/hosts;
+}

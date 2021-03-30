@@ -1,0 +1,202 @@
+#!/bin/sh
+
+# PROVIDE: nginx-ssl
+# BEFORE: nginx
+# KEYWORD: shutdown
+
+PATH=$PATH:/usr/local/bin:/usr/local/sbin
+
+. /etc/rc.subr
+. /etc/profile
+ 
+name=nginx_ssl
+load_rc_config $name
+rcvar=${name}_enable
+start_cmd=${name}_start
+stop_cmd=${name}_stop
+status_cmd=${name}_status
+reload_cmd=${name}_reload
+extra_commands=reload
+
+nginx_path=/usr/local/etc/nginx
+proxy_path=$nginx_path/proxy.conf
+ingress_path=$nginx_path/ingress.conf
+ssl_path=/ssl
+
+build_name() {
+	echo "~^(?<app>.+)\-$1\.cloud\.local$"
+}
+
+add_rails() {
+	cat <<-CONF >> $ingress_path
+		server {
+		  server_name $1;
+		$https
+
+		  location / {
+		    include $proxy_path;
+		    set \$wanted_host $2-rails-$3;
+		    proxy_pass http://\$wanted_ip:$4;
+		  }
+		}
+
+	CONF
+}
+
+cert_valid() {
+	openssl x509 \
+	-checkend 86400 \
+	-noout \
+	-in $cert_path
+}
+
+nginx_ssl_start() {
+	if [ $CLOUD_CONTEXT = local ]; then
+		ssl_path=/ssl
+		cert_path=$ssl_path/fullchain.pem
+		key_path=$ssl_path/privkey.pem
+		server_name='~^(?<app>.+)\-(?<env>.+)\.cloud\.local$'
+		main_domain='$app-$env.cloud.local'
+	else
+		letsencrypt_path=/usr/local/etc/letsencrypt
+		live_path=$letsencrypt_path/live/$CLOUD_DOMAIN
+		cert_path=$live_path/fullchain.pem
+		key_path=$live_path/privkey.pem
+		server_name=$CLOUD_DOMAIN
+		if [ $CLOUD_HOST = $CLOUD_DOMAIN ]; then
+			redirect_domain=www.$CLOUD_DOMAIN
+			main_domain=$CLOUD_DOMAIN
+		else
+			redirect_domain=$CLOUD_DOMAIN
+			main_domain=www.$CLOUD_DOMAIN
+		fi
+	fi
+
+	redirect=$(cat <<-CONF
+		  return 301 https://$main_domain\$request_uri;
+	CONF
+	)
+
+	http=$(cat <<-CONF
+		  listen 80;
+	CONF
+	)
+
+	https=$(cat <<-CONF
+		  listen 443 ssl http2;
+		  ssl_certificate $cert_path;
+		  ssl_certificate_key $key_path;
+	CONF
+	)
+
+	cat <<-CONF > $ingress_path
+		include /usr/local/etc/nginx/hosts.map;
+
+		server {
+		  server_name $server_name;
+		$http
+		$redirect
+		}
+
+	CONF
+
+	if [ $CLOUD_CONTEXT = local ]; then
+		add_rails $(build_name development) \$app development 80
+		add_rails $(build_name test) \$app development 3000
+		add_rails $(build_name '(?<env>.+)') \$app \$env 80
+	else
+		cat <<-CONF >> $ingress_path
+			server {
+			  server_name $redirect_domain;
+			$https
+			$redirect
+			}
+
+		CONF
+		add_rails $server_name $CLOUD_NAME production 80
+	fi
+
+	if [ $CLOUD_CONTEXT = local ]; then
+		cert_path=$ssl_path/fullchain.pem
+		key_path=$ssl_path/privkey.pem
+		req_path=/tmp/req.cnf
+
+		mkdir -p $ssl_path
+		cat <<-SSL > $req_path
+			[req]
+			distinguished_name = req_distinguished_name
+			x509_extensions = v3_req
+			prompt = no
+
+			[req_distinguished_name]
+			C = UY
+			ST = MA
+			L = Punta del Este
+			O = Chi
+			OU = IT
+			CN = *.cloud.local
+
+			[v3_req]
+			keyUsage = critical, digitalSignature, keyAgreement
+			extendedKeyUsage = serverAuth
+			subjectAltName = @alt_names
+
+			[alt_names]
+			DNS.1 = *.cloud.local
+		SSL
+
+		if [ ! -f $cert_path ] || ! cert_valid; then
+			openssl req \
+			-nodes \
+			-sha256 \
+			-x509 \
+			-days 365 \
+			-newkey rsa:2048 \
+			-out $cert_path \
+			-keyout $key_path \
+			-config $req_path
+
+			rm $req_path
+		fi
+	else
+		ini_path=$letsencrypt_path/cloudflare.ini
+
+		if [ -d $live_path ]; then
+			certbot renew
+		else
+			cat <<-INI > $ini_path
+				dns_cloudflare_email = $DNS_USER
+				dns_cloudflare_api_key = $DNS_PASS
+			INI
+
+			opts="-d $CLOUD_DOMAIN"
+			if echo $CLOUD_DOMAIN | grep -qE '^[a-z]+\.[a-z]+$'; then
+				opts="$opts -d *.$CLOUD_DOMAIN"
+			fi
+
+			certbot certonly \
+			$opts \
+			-n \
+			--agree-tos \
+			--email $DNS_USER \
+			--dns-cloudflare \
+			--dns-cloudflare-credentials $ini_path
+		fi
+	fi
+
+	service nginx onestart
+}
+
+nginx_ssl_status() {
+	service nginx onestatus
+}
+
+nginx_ssl_reload() {
+	service nginx onereload
+}
+
+nginx_ssl_stop() {
+	service nginx onestop
+}
+
+run_rc_command "$1"

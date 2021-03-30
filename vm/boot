@@ -1,13 +1,13 @@
 #!/bin/sh
 
-sudo /usr/local/cloud/bin/xhyve \
--U 3646C502-7C09-4259-B71D-4B4BB447D6A6 \
+sudo xhyve \
+-U 0AA89452-4787-4511-A89D-694ABA8BF0E1 \
 -A \
--c 4 \
 -m 4G \
+-c 4 \
 -s 0,hostbridge \
 -s 2,virtio-net \
 -s 4,virtio-blk,disk.img \
 -s 31,lpc \
 -l com1,stdio \
--f 'kexec,vmlinuz,initrd,earlyprintk=serial console=ttyS0 root=/dev/vda1'
+-f fbsd,userboot.so,disk.img,
