@@ -1,2 +1,2 @@
 #!/bin/sh
-cloud bin $0 $@
+cloud-bsd bin $0 $@
