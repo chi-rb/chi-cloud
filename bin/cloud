@@ -5,13 +5,13 @@
 name=cloud-bsd
 pid=$$
 branch=bsd
+bin_path=/usr/local/bin
 xhyve_path=$bin_path/xhyve-bsd
 wait_count=15
 freebsd_url="ftp://ftp.tw.freebsd.org/pub/FreeBSD/releases/amd64/\$(uname -r)/"
 hosts_path=/etc/hosts
 nfsd_path=/sbin/nfsd
 tcc_path=/Library/Application\ Support/com.apple.TCC/TCC.db
-bin_path=/usr/local/bin
 ps1="export PS1=\"\h \w > \""
 
 terminal_path=/System/Applications/Utilities/Terminal.app
