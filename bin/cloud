@@ -1344,6 +1344,9 @@ container_safe_stop_one() {
 container_stop_one() {
 	printf "Stopping container \"$2\" ... "
 	container_service stop $1
+	node_ssh <<-SSH
+		umount -f $fs_data_path/$1
+	SSH
 	echo DONE!
 }
 
@@ -1754,14 +1757,16 @@ node_jail_init() {
 			$ps1
 		CONF
 
+		mkdir -p /var/log/jail
 		cat <<-CONF > $jail_conf_path
+			exec.clean;
+			exec.consolelog = "/var/log/jail/\\\$name";
 			exec.start = '/bin/sh /etc/rc';
 			exec.stop = '/bin/sh /etc/rc.shutdown';
-			exec.clean;
-			mount.devfs;
 
-			path = "$jail_data_path/\\\$name";
+			mount.devfs;
 			mount.fstab = "$jail_fstab_path/\\\$name";
+			path = "$jail_data_path/\\\$name";
 			interface = 'lo1';
 			host.hostname = "\\\$name";
 			allow.raw_sockets = 1;
@@ -1866,8 +1871,8 @@ cmd_vm_uninstall() {
 	vm_delete_files
 	begin Deleting Hostname
 	vm_delete_host
-	begin Unsharing Home Directory
-	vm_unshare_home
+	#begin Unsharing Home Directory
+	#vm_unshare_home
 	complete
 }
 
@@ -2154,13 +2159,6 @@ fi
 cloud_load
 
 case $1 in
-debug)
-	app_load
-	container_stop
-	branch_checkout_one occam-ets-redis-development redis master
-	#echo test > "$app_branch_path"
-	container_start
-;;
 bin)
 	shift
 	cmd_cloud_bin $@
