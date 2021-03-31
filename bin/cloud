@@ -2023,6 +2023,7 @@ vm_first_start() {
 		fi
 		mkdir -p $tmp_path
 		nc -l 1234 > $tmp_conf_path &
+		sleep 5
 		xhyve_spawn
 		while [ -z "$(cat $tmp_conf_path)" ]; do
 			printf .
