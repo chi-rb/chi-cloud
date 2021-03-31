@@ -2145,7 +2145,8 @@ aws_create_cloud() {
 	aws_config
 }
 
-trap 'exit 1' 10
+trap 'exit' INT TERM
+trap 'kill 0' EXIT
 
 if [ -f $user_conf_path ]; then
 	cloud_read_ini $user_conf_path
