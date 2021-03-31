@@ -947,11 +947,13 @@ branch_checkout_one() {
 	if [ $active_branch != $new_branch ]; then
 		printf "Checking out \"$2\" branch \"$3\" ..."
 		node_ssh <<-SSH
+			zfs umount -f $fs_data_path/$1
 			zfs rename $active_fs ${active_fs}-$active_branch
 		SSH
 		if fs_exists $1-$new_branch; then
 			node_ssh <<-SSH
 				zfs rename ${active_fs}-$new_branch $active_fs
+				zfs mount $fs_data_path/$1
 			SSH
 		else
 			node_ssh <<-SSH
@@ -1344,9 +1346,6 @@ container_safe_stop_one() {
 container_stop_one() {
 	printf "Stopping container \"$2\" ... "
 	container_service stop $1
-	node_ssh <<-SSH
-		umount -f $fs_data_path/$1
-	SSH
 	echo DONE!
 }
 
