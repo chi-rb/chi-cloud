@@ -2170,8 +2170,8 @@ install)
 	cmd_vm_install
 ;;
 uninstall)
-	cmd_cloud_uninstall
 	cmd_vm_uninstall
+	cmd_cloud_uninstall
 ;;
 update)
 	cmd_cloud_update
