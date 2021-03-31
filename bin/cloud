@@ -76,7 +76,7 @@ vm_name=$name.local
 vm_host=$vm_name
 vm_mem=4G
 vm_cpus=4
-vm_id=3646C502-7C09-4259-B71D-4B4BB447D6A6
+vm_id=8299FDAA-4CC0-4FF2-AE5B-A1E1DEC574D7
 
 ca_path=/usr/local/share/ca-certificates
 ca_cert_path=$ca_path/cloud.crt
