@@ -523,7 +523,11 @@ cmd_cloud_update() {
 	cd $repo_path
 	git pull
 	current_branch=$(git branch | cut -d ' ' -f2)
-	new_branch=${2:-master}
+	if [ -z "$2" ]; then
+		new_branch=$branch
+	else
+		new_branch=$2
+	fi
 	if [ $current_branch != $new_branch ]; then
 		git checkout $new_branch
 	fi
@@ -2177,9 +2181,11 @@ gen-key)
 	cmd_cloud_gen_key
 ;;
 encrypt)
+	shift
 	cmd_cloud_encrypt $@
 ;;
 decrypt)
+	shift
 	cmd_cloud_decrypt $@
 ;;
 branch|volume|snapshot|tunnel|container|vm)
