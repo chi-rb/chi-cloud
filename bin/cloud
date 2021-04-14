@@ -894,15 +894,7 @@ fs_exists() {
 
 cmd_branch_list() {
 	local branches branch
-	branches=$(
-		fs_list |
-		grep -o "$app_name-.*-$cloud_env-[^-]*" |
-		rev |
-		cut -d - -f 1 |
-		rev
-	)
-	branches+="\n$(branch_read)"
-	branches=$(echo "$branches" | sort | uniq)
+	branches=$(branch_list)
 	for branch in $branches; do
 		printf $branch
 		if [ $branch = $(branch_read) ]; then
@@ -941,6 +933,19 @@ branch_read() {
 	else
 		echo master
 	fi
+}
+
+branch_list() {
+	cat <<-SH | sort | uniq
+		$(
+			fs_list |
+			grep -o "$app_name-.*-$cloud_env-[^-]*" |
+			rev |
+			cut -d - -f 1 |
+			rev
+		)
+		$(branch_read)
+	SH
 }
 
 branch_checkout_one() {
@@ -1046,12 +1051,21 @@ volume_delete_one() {
 # SNAPSHOT
 
 cmd_snapshot_list() {
-	local prefix escaped_prefix
+	local prefix escaped_prefix name creation snapshots snapshot long_name short_name
 	prefix=$fs_data_path
 	escaped_prefix=$(escape_path $prefix/)
-	node_ssh <<-SSH
-		zfs list -Hrt snapshot -o name,creation $prefix | sed 's/$escaped_prefix//'
-	SSH
+	snapshots=$(node_ssh "zfs list -Hrt snapshot -o name,creation $prefix | sed 's/$escaped_prefix//'")
+	while read name creation; do
+		snapshot=$(echo $name | cut -d @ -f 2)
+		case $snapshot in
+		*-snap)
+			snapshot=$(echo $snapshot | sed 's/-snap//')
+			long_name=$(echo $name | cut -d @ -f 1)
+			short_name=$(container_collapse_name $long_name)
+			echo "$short_name@$snapshot\t$creation"
+		;;
+		esac
+	done <<< "$snapshots"
 }
 
 cmd_snapshot_create() {
@@ -1079,14 +1093,6 @@ cmd_snapshot_delete() {
 	SSH
 }
 
-cmd_snapshot_rollback() {
-	container_stop
-	node_ssh <<-SSH
-		zfs rollback -r $fs_data_path/$1@$3
-	SSH
-	container_start
-}
-
 cmd_snapshot_help() {
 	unknown $1
 	cat <<-DOC
@@ -1096,7 +1102,6 @@ cmd_snapshot_help() {
 			list          Lists snapshot
 			create        Creates snapshot
 			delete        Deletes snapshot
-			rollback      Exports snapshot
 			help          Prints documentation
 	DOC
 }
@@ -1106,7 +1111,7 @@ snapshot_exists() {
 }
 
 snapshot_build_name() {
-	echo $fs_data_path/$1@$2
+	echo $fs_data_path/$1@$2-snap
 }
 
 # TUNNEL
@@ -1797,6 +1802,9 @@ node_jail_init() {
 			rdr-anchor tunnels
 
 			nat on \\\$EXT_IF from \\\$JAIL_NET to any -> (\\\$EXT_IF)
+
+			rdr pass on \\\$EXT_IF inet proto tcp to port { http, https } -> \\\$INGRESS_IP
+
 			pass out quick all keep state
 			pass in quick proto tcp from any to any
 		CONF
@@ -2227,9 +2235,6 @@ branch|volume|snapshot|tunnel|container|vm)
 			;;
 			create)
 				cmd_snapshot_create $args
-			;;
-			rollback)
-				cmd_snapshot_rollback $args
 			;;
 			delete)
 				cmd_snapshot_delete $args
