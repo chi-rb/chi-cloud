@@ -467,10 +467,11 @@ xhyve_running() {
 # CLOUD 
 
 cmd_cloud_bin() {
-	local abs_path target real_path cmd alt
+	local abs_path target real_path cmd alt name
 	abs_path=$1
 	target=$(basename $abs_path)
 	if app_cloud_exists; then
+		cloud_load
 		shift
 		rel_path=bin/$target
 		if [ -f $rel_path ]; then
@@ -478,11 +479,8 @@ cmd_cloud_bin() {
 		else
 			cmd=$target
 		fi
-		if [ $cmd = kubectl ]; then
-			vm_kubectl	"$@"
-		else
-			cloud_exec -- $cmd "$@"
-		fi
+		name=$(container_expand_name rails)
+		container_exec $name /rails/$cmd "$@"
 	else
 		alt=$(which -a $target | grep -A 1 $abs_path | tail -n 1)
 		if [ -z "$alt" ]; then
@@ -1167,8 +1165,7 @@ cmd_container_exec() {
 			error Wrong format
 		fi
 	fi
-	container_ensure_instance $name
-	container_ssh $name $@
+	container_exec $name $@
 }
 
 cmd_container_deploy() {
@@ -1238,6 +1235,14 @@ cmd_container_help() {
 			tunnel        Tunnels into vm
 			help          Prints documentation
 	DOC
+}
+
+container_exec() {
+	local name
+	name=$1
+	shift
+	container_ensure_instance $name
+	container_ssh $name $@
 }
 
 container_deploy() {
