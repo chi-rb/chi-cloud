@@ -470,7 +470,7 @@ cmd_cloud_bin() {
 	local abs_path target real_path cmd alt
 	abs_path=$1
 	target=$(basename $abs_path)
-	if cloud_dir_exists; then
+	if app_cloud_exists; then
 		shift
 		rel_path=bin/$target
 		if [ -f $rel_path ]; then
@@ -553,15 +553,6 @@ cmd_cloud_decrypt() {
 	echo "$secret" | openssl enc -k $cloud_key -aes256 -salt -base64 -A -d
 }
 
-cloud_copy() {
-	local source destination
-	source=$(cloud_target_normalize $1)
-	destination=$(cloud_target_normalize $2)
-	fast_scp \
-	$source \
-	$destination
-}
-
 cmd_cloud_help() {
 	unknown
 	cat <<-DOC
@@ -577,6 +568,15 @@ cmd_cloud_help() {
 			vm            Manages virtual machine
 			help          Prints documentation
 	DOC
+}
+
+cloud_copy() {
+	local source destination
+	source=$(cloud_target_normalize $1)
+	destination=$(cloud_target_normalize $2)
+	fast_scp \
+	$source \
+	$destination
 }
 
 cloud_target_normalize() {
