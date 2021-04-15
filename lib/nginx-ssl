@@ -24,7 +24,7 @@ ingress_path=$nginx_path/ingress.conf
 ssl_path=/ssl
 
 build_name() {
-	echo "~^(?<app>.+)\-$1\.cloud-bsd\.local$"
+	echo "~^(?<app>.+)\-$1\.cloud\.local$"
 }
 
 add_rails() {
@@ -55,8 +55,8 @@ nginx_ssl_start() {
 		ssl_path=/ssl
 		cert_path=$ssl_path/fullchain.pem
 		key_path=$ssl_path/privkey.pem
-		server_name='~^(?<app>.+)\-(?<env>.+)\.cloud-bsd\.local$'
-		main_domain='$app-$env.cloud-bsd.local'
+		server_name='~^(?<app>.+)\-(?<env>.+)\.cloud\.local$'
+		main_domain='$app-$env.cloud.local'
 	else
 		letsencrypt_path=/usr/local/etc/letsencrypt
 		live_path=$letsencrypt_path/live/$CLOUD_DOMAIN
@@ -134,7 +134,7 @@ nginx_ssl_start() {
 			L = Punta del Este
 			O = Chi
 			OU = IT
-			CN = *.cloud-bsd.local
+			CN = *.cloud.local
 
 			[v3_req]
 			keyUsage = critical, digitalSignature, keyAgreement
@@ -142,7 +142,7 @@ nginx_ssl_start() {
 			subjectAltName = @alt_names
 
 			[alt_names]
-			DNS.1 = *.cloud-bsd.local
+			DNS.1 = *.cloud.local
 		SSL
 
 		if [ ! -f $cert_path ] || ! cert_valid; then

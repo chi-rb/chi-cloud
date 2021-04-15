@@ -2,11 +2,12 @@
 
 # SETTINGS
 
-name=cloud-bsd
+name=cloud
 pid=$$
-branch=bsd
+mac_ver=$(sw_vers -productVersion | cut -d . -f 1)
+branch=master
 bin_path=/usr/local/bin
-xhyve_path=$bin_path/xhyve-bsd
+xhyve_path=$bin_path/xhyve
 wait_count=15
 freebsd_url="ftp://ftp.tw.freebsd.org/pub/FreeBSD/releases/amd64/\$(uname -r)/"
 hosts_path=/etc/hosts
@@ -2168,6 +2169,10 @@ aws_create_cloud() {
 
 trap 'exit' INT TERM
 trap 'kill 0' EXIT
+
+if [ $mac_ver -lt 10 ] || [ $mac_ver -gt 11 ]; then
+	error macOS version not supported
+fi
 
 if [ -f $user_conf_path ]; then
 	cloud_read_ini $user_conf_path
