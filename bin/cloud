@@ -302,7 +302,6 @@ mac_export_exists() {
 
 mac_ensure_nfsd() {
 	sudo $nfsd_path enable
-	sudo $nfsd_path start
 }
 
 mac_update_nfsd() {
@@ -379,7 +378,6 @@ mac_authorize_nfsd() {
 	if ! mac_bin_authorized $nfsd_path; then
 		mac_authorize_bin $nfsd_path
 		mac_ensure_nfsd
-		mac_update_nfsd
 	else
 		echo Already authorized
 	fi
