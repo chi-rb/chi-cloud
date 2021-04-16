@@ -46,6 +46,7 @@ repo_xhyve_path=$repo_bin_path/xhyve
 
 user_cloud_path=$HOME/.$name
 user_branch_path=$user_cloud_path/branch
+user_log_path=$user_cloud_path/log
 user_conf_path=$user_cloud_path/conf
 user_pid_path=$user_cloud_path/pid
 user_disk_path=$user_cloud_path/disk.img
@@ -403,7 +404,7 @@ xhyve_spawn() {
 	-s 2,virtio-net \
 	-s 4,virtio-blk,$user_disk_path \
 	-f "fbsd,$repo_userboot_path,$user_disk_path," \
-	&>/dev/null &
+	&>$user_log_path &
 	echo $! > $user_pid_path
 }
 
