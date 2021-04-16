@@ -1353,6 +1353,7 @@ container_delete_one() {
 		sed -i '' "/$1 .*/d" $ingress_hosts_path
 		sed -i '' "/.* $1/d" $hosts_path
 	SSH
+	node_reload_ingress
 	if [ -z "$(container_list_created)" ]; then
 		rm -f "$app_branch_path"
 	fi
@@ -1736,6 +1737,7 @@ container_assign_ip() {
 		echo '$1 $ip;' >> $ingress_hosts_path
 		echo '$1 { ip4.addr = $ip; }' >> $jail_conf_path
 	SSH
+	node_reload_ingress
 }
 
 # NODE
@@ -1877,6 +1879,12 @@ node_jail_init() {
 	SSH
 	host=$(node_host)
 	rm /tmp/root@$host
+}
+
+node_reload_ingress() {
+	cat <<-SSH | container_ssh system-ingress
+		service nginx reload
+	SSH
 }
 
 node_ingress_init() {
