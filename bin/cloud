@@ -663,7 +663,7 @@ cloud_refresh_hosts() {
 			fi
 		done
 		if ! echo $namespaces | grep -q ${app_name}-$cloud_env; then
-			line+=" ${app_name}-$env.$vm_name"
+			line+=" ${app_name}-$cloud_env.$vm_name"
 			if [ $cloud_env = development ]; then
 				line+=" ${app_name}-test.$vm_name"
 			fi
