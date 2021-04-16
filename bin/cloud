@@ -2076,6 +2076,9 @@ vm_first_start() {
 		while [ -z "$(cat $tmp_conf_path)" ]; do
 			printf .
 			sleep $wait_count
+      if ! xhyve_running; then
+        error Xhyve process failed check ~/.cloud/log
+      fi
 		done
 		. $tmp_conf_path
 		mac_add_conf $user_conf_path mac_ip
