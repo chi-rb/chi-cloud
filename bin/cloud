@@ -627,17 +627,21 @@ cloud_clean_tmp() {
 cloud_clone() {
 	local current_rev new_rev
 	git clone git@github.com:chi-rb/chi-cloud.git --single-branch --branch $branch $tmp_repo_path
-	if [ ! -d $repo_path ]; then
-		sudo mv $tmp_repo_path $repo_path
-	else
-		current_rev=$(cloud_rev $repo_path)
-		new_rev=$(cloud_rev $tmp_repo_path)
-		if [ $current_rev != $new_rev ]; then
-			rm -rf $tmp_path
-			error "\nSeems you're changing Cloud's version, please run \"cloud uninstall\" first"
+	if [ $? != 0 ]; then
+		if [ ! -d $repo_path ]; then
+			sudo mv $tmp_repo_path $repo_path
 		else
-			echo Already cloned
+			current_rev=$(cloud_rev $repo_path)
+			new_rev=$(cloud_rev $tmp_repo_path)
+			if [ $current_rev != $new_rev ]; then
+				rm -rf $tmp_path
+				error "\nSeems you're changing Cloud's version, please run \"cloud uninstall\" first"
+			else
+				echo Already cloned
+			fi
 		fi
+	else 
+		error "Can't clone repo"
 	fi
 }
 
