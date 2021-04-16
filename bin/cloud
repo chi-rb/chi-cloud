@@ -627,7 +627,7 @@ cloud_clean_tmp() {
 cloud_clone() {
 	local current_rev new_rev
 	git clone git@github.com:chi-rb/chi-cloud.git --single-branch --branch $branch $tmp_repo_path
-	if [ $? != 0 ]; then
+	if [ $? == 0 ]; then
 		if [ ! -d $repo_path ]; then
 			sudo mv $tmp_repo_path $repo_path
 		else
