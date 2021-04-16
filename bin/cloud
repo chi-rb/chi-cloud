@@ -1883,7 +1883,7 @@ node_jail_init() {
 
 node_reload_ingress() {
 	cat <<-SSH | container_ssh system-ingress
-		service nginx reload
+		service nginx-ssl reload
 	SSH
 }
 
