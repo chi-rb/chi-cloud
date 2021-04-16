@@ -1686,7 +1686,7 @@ container_ssh() {
 	short_name=$(container_collapse_name $long_name)
 	home_name=${short_name}_home
 	home_path=${!home_name}
-	if [ ! -z "$home_path" ] && ([ -t 0 ] && [ ! -z $@ ]); then
+	if [ ! -z "$home_path" ] && ([ -t 0 ] || [ ! -z "$@" ]); then
 		if [ -t 0 ]; then
 			cmd=$@
 		else
