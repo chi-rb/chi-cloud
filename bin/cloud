@@ -477,6 +477,17 @@ xhyve_running() {
 
 # CLOUD 
 
+cmd_cloud_open() {
+	local url
+	app_load
+	if [ $cloud_context = local ]; then
+		url=$app_name-$cloud_env.$vm_name
+	else
+		url=$app_domain
+	fi
+	open https://$url
+}
+
 cmd_cloud_bin() {
 	local abs_path target real_path cmd alt name
 	abs_path=$1
@@ -542,7 +553,6 @@ cmd_cloud_update() {
 		git checkout $new_branch
 	fi
 	cd "$current_path"
-	complete
 }
 
 cmd_cloud_gen_key() {
@@ -636,19 +646,18 @@ cloud_refresh_hosts() {
 		begin Refreshing Hosts
 		local namespaces namespace line name env envs
 		line=$(echo $vm_ip $vm_name)
-		namespaces=$(cat $hosts_path | grep $vm_name | cut -d ' ' -f 2- | sed "s/$vm_name//")
+		namespaces=$(cat $hosts_path | grep $vm_name | cut -d ' ' -f 3- | sed "s/.$vm_name//g")
 		for namespace in $namespaces; do
 			name=$(echo $namespace | rev | cut -d - -f 2- | rev)
 			env=$(echo $namespace | rev | cut -d - -f 1 | rev)
-			if container_list_all_created | grep -q ${name}-rails-${env}; then
+			if [ $env = test ] || container_list_all_created | grep -q ${name}-${env}-rails; then
 				line+=" ${app_name}-$env.$vm_name"
 			fi
 		done
 		if ! echo $namespaces | grep -q ${app_name}-$cloud_env; then
+			line+=" ${app_name}-$env.$vm_name"
 			if [ $cloud_env = development ]; then
-				for env in development test; do
-					line+=" ${app_name}-$env.$vm_name"
-				done
+				line+=" ${app_name}-test.$vm_name"
 			fi
 		fi
 		mac_delete_line -s $hosts_path $vm_name
@@ -1181,6 +1190,7 @@ cmd_container_exec() {
 
 cmd_container_deploy() {
 	container_deploy $1 $2
+	cloud_refresh_hosts
 }
 
 cmd_container_delete() {
@@ -1262,7 +1272,6 @@ container_deploy() {
 	else
 		container_safe_deploy_one $1 $2
 	fi
-	cloud_refresh_hosts
 }
 
 container_deploy_all() {
@@ -1293,13 +1302,12 @@ container_safe_deploy_one() {
 
 container_deploy_one() {
 	local path
-	echo "Creating container $2 ..."
+	begin Creating container $2
 	container_create $1 $2
 	path="$app_builds_path/$2"
 	cat <<-SSH | container_ssh $1
 		$(cat "$path")
 	SSH
-	echo DONE!
 }
 
 container_delete() {
@@ -1326,7 +1334,7 @@ container_safe_delete_one() {
 
 container_delete_one() {
 	container_stop_one $1 $2
-	printf "Deleting container $2 ... "
+	printf "Deleting container $2 ..."
 	node_ssh <<-SSH
 		rm $jail_fstab_path/$1
 		rm -f /tmp/root@$1
@@ -1492,9 +1500,15 @@ container_list_declared() {
 	done
 }
 
+container_list_all_created() {
+	node_ssh <<-SSH
+		cat /etc/jail.conf | grep -o ^.*-[^\ ]* | grep -v system-ingress
+	SSH
+}
+
 container_list_created() {
 	node_ssh <<-SSH
-		cat /etc/jail.conf | grep -o ^${app_name}-${cloud_env}-.*
+		cat /etc/jail.conf | grep -o ^${app_name}-${cloud_env}-[^\ ]*
 	SSH
 }
 
@@ -1663,7 +1677,7 @@ container_ssh() {
 	short_name=$(container_collapse_name $long_name)
 	home_name=${short_name}_home
 	home_path=${!home_name}
-	if [ ! -z "$home_path" ]; then
+	if [ ! -z "$home_path" ] && ([ -t 0 ] && [ ! -z $@ ]); then
 		if [ -t 0 ]; then
 			cmd=$@
 		else
@@ -1906,7 +1920,6 @@ cmd_vm_install() {
 	node_ingress_init
 	begin Installing Certificates
 	cloud_trust_cert
-	complete
 }
 
 cmd_vm_uninstall() {
@@ -1918,7 +1931,6 @@ cmd_vm_uninstall() {
 	vm_delete_host
 	begin Unsharing Home Directory
 	vm_unshare_home
-	complete
 }
 
 cmd_vm_config() {
@@ -2218,13 +2230,18 @@ bin)
 install)
 	cmd_cloud_install
 	cmd_vm_install
+	complete
 ;;
 uninstall)
 	cmd_vm_uninstall
 	cmd_cloud_uninstall
+	complete
 ;;
 update)
 	cmd_cloud_update
+;;
+open)
+	cmd_cloud_open
 ;;
 gen-key)
 	cmd_cloud_gen_key
@@ -2345,9 +2362,11 @@ branch|volume|snapshot|tunnel|container|vm)
 		case $cmd in
 		install)
 			cmd_vm_install
+			complete
 		;;
 		uninstall)
 			cmd_vm_uninstall
+			complete
 		;;
 		config)
 			cmd_vm_config

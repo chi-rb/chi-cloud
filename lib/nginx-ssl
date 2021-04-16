@@ -35,7 +35,7 @@ add_rails() {
 
 		  location / {
 		    include $proxy_path;
-		    set \$wanted_host $2-rails-$3;
+		    set \$wanted_host $2-$3-rails;
 		    proxy_pass http://\$wanted_ip:$4;
 		  }
 		}
