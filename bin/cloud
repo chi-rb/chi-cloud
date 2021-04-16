@@ -62,8 +62,9 @@ jail_shared_path=$jail_path/shared
 jail_hosts_path=$jail_base_path/etc/hosts
 jail_conf_path=/etc/jail.conf
 
-ingress_nginx_path=$jail_shared_path/system/nginx
-ingress_ssl_path=$jail_shared_path/system/ssl
+ingress_shared_path=$jail_shared_path/system
+ingress_nginx_path=$ingress_shared_path/nginx
+ingress_ssl_path=$ingress_shared_path/ssl
 ingress_hosts_path=$ingress_nginx_path/hosts
 system_ingress_vols='ssl:/ssl nginx:/usr/local/etc/nginx'
 
@@ -253,8 +254,8 @@ mac_add_conf() {
 			echo "\n[$group]" | $precmd tee -a "$1" >/dev/null
 		fi
 		$precmd sed -i '' $"/\[$group\]/a\\
-		$conf\\
-		" "$1"
+$conf\\
+" "$1"
 	else
 		error "File $1 don't exist"
 	fi
@@ -1864,6 +1865,7 @@ node_ingress_init() {
 	rc_path=$etc_path/rc.d
 	mkdir -p $user_ssl_path
 	cat <<-SSH | vm_ssh
+		mkdir -p $ingress_shared_path
 		ln -s $user_ssl_path $ingress_ssl_path
 	SSH
 	container_create system-ingress system_ingress
@@ -1873,7 +1875,7 @@ node_ingress_init() {
 		py37-certbot \
 		py37-certbot-nginx \
 		py37-certbot-dns-cloudflare
-		touch $nginx_path/hosts
+		touch /usr/local/etc/nginx/hosts
 	SSH
 	for target in proxy.conf nginx.conf hosts.map; do
 		cloud_copy $repo_lib_path/$target vm:$nginx_path
@@ -1914,8 +1916,8 @@ cmd_vm_uninstall() {
 	vm_delete_files
 	begin Deleting Hostname
 	vm_delete_host
-	#begin Unsharing Home Directory
-	#vm_unshare_home
+	begin Unsharing Home Directory
+	vm_unshare_home
 	complete
 }
 
