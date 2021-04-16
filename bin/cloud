@@ -300,6 +300,11 @@ mac_export_exists() {
 	test -f $exports_path && sudo grep $exports_home_path $exports_path >/dev/null 2>&1
 }
 
+mac_ensure_nfsd() {
+	sudo $nfsd_path enable
+	sudo $nfsd_path start
+}
+
 mac_update_nfsd() {
 	sudo $nfsd_path update
 }
@@ -373,6 +378,7 @@ mac_authorize_terminal() {
 mac_authorize_nfsd() {
 	if ! mac_bin_authorized $nfsd_path; then
 		mac_authorize_bin $nfsd_path
+		mac_ensure_nfsd
 		mac_update_nfsd
 	else
 		echo Already authorized
