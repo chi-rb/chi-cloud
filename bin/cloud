@@ -62,6 +62,7 @@ jail_hosts_path=$jail_base_path/etc/hosts
 jail_conf_path=/etc/jail.conf
 
 ingress_nginx_path=$jail_shared_path/system/nginx
+ingress_ssl_path=$jail_shared_path/system/ssl
 ingress_hosts_path=$ingress_nginx_path/hosts
 system_ingress_vols='ssl:/ssl nginx:/usr/local/etc/nginx'
 
@@ -337,9 +338,16 @@ mac_bin_authorized() {
 	else
 		client=$1
 	fi
+	case $mac_ver in
+	10)
+		sql="select 0 from access where allowed=true and service=\"kTCCServiceSystemPolicyAllFiles\" and client=\"$client\""
+	;;
+	11)
+		sql="select 0 from access where auth_value=2 and service=\"kTCCServiceSystemPolicyAllFiles\" and client=\"$client\""
+	;;
+	esac
 	result=$(
-		sudo sqlite3 "$tcc_path" \
-		"select 0 from access where auth_value=2 and service=\"kTCCServiceSystemPolicyAllFiles\" and client=\"$client\"" 2>/dev/null
+		sudo sqlite3 "$tcc_path" "$sql" 2>/dev/null
 	)
 	if [ $? = 1 ]; then
 		return 1
@@ -474,7 +482,6 @@ cmd_cloud_bin() {
 	if [ -d ./cloud ]; then
 		app_load
 		shift
-		target=$(echo $target | sed 's/-bsd$//')
 		cmd=$(echo $cmd)
 		rel_path=bin/$target
 		if [ -f $rel_path ]; then
@@ -624,19 +631,24 @@ cloud_clone() {
 
 cloud_refresh_hosts() {
 	if [ $cloud_context = local ]; then
-		#begin Refreshing Hosts
-		local namespaces namespace line name env subdomain
-		namespaces=$(kubectl get namespaces -l type=app -o jsonpath={.items[*].metadata.name})
-		line=$(echo $vm_ip cloud $vm_name registry.$vm_name)
+		begin Refreshing Hosts
+		local namespaces namespace line name env envs
+		line=$(echo $vm_ip $vm_name)
+		namespaces=$(cat $hosts_path | grep $vm_name | cut -d ' ' -f 2- | sed "s/$vm_name//")
 		for namespace in $namespaces; do
 			name=$(echo $namespace | rev | cut -d - -f 2- | rev)
 			env=$(echo $namespace | rev | cut -d - -f 1 | rev)
-			if [ $env = development ]; then
-				for subdomain in $env test; do
-					line+=" $name-$subdomain.$vm_name"
-				done
+			if container_list_all_created | grep -q ${name}-rails-${env}; then
+				line+=" ${app_name}-$env.$vm_name"
 			fi
 		done
+		if ! echo $namespaces | grep -q ${app_name}-$cloud_env; then
+			if [ $cloud_env = development ]; then
+				for env in development test; do
+					line+=" ${app_name}-$env.$vm_name"
+				done
+			fi
+		fi
 		mac_delete_line -s $hosts_path $vm_name
 		mac_add_host_line $line
 	fi
@@ -727,12 +739,6 @@ cloud_trust_cert() {
 	-r trustRoot \
 	-k /Library/Keychains/System.keychain \
 	$user_cert_path
-	vm_ssh <<-SSH
-		mkdir -p $ca_path
-		cp $user_cert_path $ca_cert_path
-		update-ca-certificates
-		service k3s restart
-	SSH
 }
 
 cloud_read_ini() {
@@ -940,35 +946,35 @@ branch_list() {
 	cat <<-SH | sort | uniq
 		$(
 			fs_list |
-			grep -o "$app_name-.*-$cloud_env-[^-]*" |
-			rev |
-			cut -d - -f 1 |
-			rev
+			grep -o ".*-$app_name-$cloud_env-.*" |
+			sed "s/-$app_name-$cloud_env-.*$//"
 		)
 		$(branch_read)
 	SH
 }
 
 branch_checkout_one() {
-	local active_branch active_fs new_branch
+	local active_branch active_fs active_branch_fs new_branch new_branch_fs
 	active_branch=$(branch_read)
 	active_fs=$fs_data_path/$1
+	active_branch_fs=$fs_data_path/${active_branch}-$1
 	new_branch=$3
+	new_branch_fs=$fs_data_path/${new_branch}-$1
 	if [ $active_branch != $new_branch ]; then
 		printf "Checking out \"$2\" branch \"$3\" ..."
 		node_ssh <<-SSH
-			zfs umount -f $fs_data_path/$1
-			zfs rename $active_fs ${active_fs}-$active_branch
+			zfs umount -f $active_fs
+			zfs rename $active_fs $active_branch_fs
 		SSH
-		if fs_exists $1-$new_branch; then
+		if fs_exists ${new_branch}-1; then
 			node_ssh <<-SSH
-				zfs rename ${active_fs}-$new_branch $active_fs
-				zfs mount $fs_data_path/$1
+				zfs rename $new_branch_fs $active_fs
+				zfs mount $active_fs
 			SSH
 		else
 			node_ssh <<-SSH
-				zfs snapshot ${active_fs}-$active_branch@$new_branch
-				zfs clone ${active_fs}-$active_branch@$new_branch $active_fs
+				zfs snapshot $active_branch_fs@$new_branch
+				zfs clone $active_branch_fs@$new_branch $active_fs
 			SSH
 		fi
 		echo DONE!
@@ -1060,7 +1066,7 @@ cmd_snapshot_list() {
 		snapshot=$(echo $name | cut -d @ -f 2)
 		case $snapshot in
 		*-snap)
-			snapshot=$(echo $snapshot | sed 's/-snap//')
+			snapshot=$(echo $snapshot | sed 's/-snap$//')
 			long_name=$(echo $name | cut -d @ -f 1)
 			short_name=$(container_collapse_name $long_name)
 			echo "$short_name@$snapshot\t$creation"
@@ -1254,6 +1260,7 @@ container_deploy() {
 	else
 		container_safe_deploy_one $1 $2
 	fi
+	cloud_refresh_hosts
 }
 
 container_deploy_all() {
@@ -1485,7 +1492,7 @@ container_list_declared() {
 
 container_list_created() {
 	node_ssh <<-SSH
-		cat /etc/jail.conf | grep -o ^${app_name}-.*-${cloud_env}
+		cat /etc/jail.conf | grep -o ^${app_name}-${cloud_env}-.*
 	SSH
 }
 
@@ -1564,13 +1571,11 @@ container_ensure_no_instance() {
 }
 
 container_expand_name() {
-	echo ${app_name}-${1}-${cloud_env} | tr _ -
+	echo ${app_name}-${cloud_env}-${1} | tr _ -
 }
 
 container_collapse_name() {
-	echo $1 |
-	sed -E "s/-${cloud_env}\r?$//" |
-	sed "s/^${app_name}-//"
+	echo $1 | sed "s/^${app_name}-${cloud_env}-//"
 }
 
 container_running() {
@@ -1856,6 +1861,10 @@ node_ingress_init() {
 	etc_path=$data_path/usr/local/etc
 	nginx_path=$etc_path/nginx
 	rc_path=$etc_path/rc.d
+	mkdir -p $user_ssl_path
+	cat <<-SSH | vm_ssh
+		ln -s $user_ssl_path $ingress_ssl_path
+	SSH
 	container_create system-ingress system_ingress
 	cat <<-SSH | container_ssh system-ingress
   	pkg install -y \
@@ -1863,7 +1872,7 @@ node_ingress_init() {
 		py37-certbot \
 		py37-certbot-nginx \
 		py37-certbot-dns-cloudflare
-		touch $ingress_hosts_path
+		touch $nginx_path/hosts
 	SSH
 	for target in proxy.conf nginx.conf hosts.map; do
 		cloud_copy $repo_lib_path/$target vm:$nginx_path
@@ -1893,7 +1902,7 @@ cmd_vm_install() {
 	begin Initializing Ingress
 	node_ingress_init
 	begin Installing Certificates
-	#cloud_trust_cert
+	cloud_trust_cert
 	complete
 }
 
@@ -2071,7 +2080,7 @@ vm_first_start() {
 		mac_add_conf $user_conf_path mac_ip
 		mac_add_conf $user_conf_path vm_ip
 		rm $tmp_conf_path
-		line="$vm_ip $name $vm_name registry.$vm_name"
+		line="$vm_ip $vm_name"
 		mac_add_host_line $line
 	fi
 }
@@ -2187,7 +2196,7 @@ trap 'exit' INT TERM
 trap 'kill 0' EXIT
 
 if [ $mac_ver -lt 10 ] || [ $mac_ver -gt 11 ]; then
-	error macOS version not supported
+	error Only macOS supported versions are Catalina and Big Sur
 fi
 
 if [ -f $user_conf_path ]; then
