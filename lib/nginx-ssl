@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # PROVIDE: nginx-ssl
-# BEFORE: nginx
+# BEFORE: LOGIN cleanvar
 # KEYWORD: shutdown
 
 PATH=$PATH:/usr/local/bin:/usr/local/sbin
@@ -16,7 +16,7 @@ start_cmd=${name}_start
 stop_cmd=${name}_stop
 status_cmd=${name}_status
 reload_cmd=${name}_reload
-extra_commands=reload
+extra_commands='reload status'
 
 nginx_path=/usr/local/etc/nginx
 proxy_path=$nginx_path/proxy.conf
