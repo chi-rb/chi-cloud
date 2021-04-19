@@ -499,7 +499,6 @@ cmd_cloud_bin() {
 	if [ -d ./cloud ]; then
 		app_load
 		shift
-		cmd=$(echo $cmd)
 		rel_path=bin/$target
 		if [ -f $rel_path ]; then
 			cmd=$rel_path
@@ -507,7 +506,7 @@ cmd_cloud_bin() {
 			cmd=$target
 		fi
 		name=$(container_expand_name rails)
-		container_exec $name /rails/$cmd "$@"
+		container_exec $name /rails/$cmd $@
 	else
 		alt=$(which -a $target | grep -A 1 $abs_path | tail -n 1)
 		if [ -z "$alt" ]; then
@@ -1686,18 +1685,17 @@ container_ssh() {
 	short_name=$(container_collapse_name $long_name)
 	home_name=${short_name}_home
 	home_path=${!home_name}
-	if [ ! -z "$home_path" ] && ([ ! -t 0 ] || [ ! -z "$@" ]); then
-		if [ -t 0 ]; then
-			cmd=$@
-		else
-			cmd=$(cat -)
+	cmd=$@
+	if [ ! -z "$home_path" ] && ([ ! -t 0 ] || [ ! -z "$cmd" ]); then
+		if [ ! -t 0 ]; then
+			cmd="$(cat -)"
 		fi
 		cat <<-SSH | node_ssh $(fast_ssh_cmd root $long_name)
 			cd $home_path
 			$cmd
 		SSH
 	else
-		node_ssh $(fast_ssh_cmd root $long_name $@)
+		node_ssh $(fast_ssh_cmd root $long_name $cmd)
 	fi
 }
 
