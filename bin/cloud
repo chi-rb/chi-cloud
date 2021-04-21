@@ -1170,15 +1170,15 @@ cmd_tunnel_help() {
 # CONTAINER
 
 cmd_container_list() {
-	local list long_name short_name state
+	local list long_name short_name status
 	for long_name in $(container_list_created); do
 		short_name=$(container_collapse_name $long_name)
-		printf "$short_name\t"
 		if container_running $short_name; then
-			echo 'RUNNING'
+			status=RUNNING
 		else
-			echo 'STOPPED'
+			status=STOPPED
 		fi
+		printf "%-20s %-20s\n" $short_name $status
 	done
 }
 
