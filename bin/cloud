@@ -1935,7 +1935,7 @@ node_jail_init() {
 
 node_reload_ingress() {
 	cat <<-SSH | container_ssh system-ingress
-		service nginx-ssl reload
+		service nginx_ssl reload
 	SSH
 }
 
@@ -1962,10 +1962,10 @@ node_ingress_init() {
 	for target in proxy.conf nginx.conf hosts.map; do
 		cloud_copy $repo_lib_path/$target vm:$nginx_path
 	done
-	cloud_copy $repo_lib_path/nginx-ssl vm:$rc_path
+	cloud_copy $repo_lib_path/nginx_ssl vm:$rc_path
 	cat <<-SSH | container_ssh system-ingress
-		service nginx-ssl enable
-		service nginx-ssl start
+		service nginx_ssl enable
+		service nginx_ssl start
 	SSH
 }
 
