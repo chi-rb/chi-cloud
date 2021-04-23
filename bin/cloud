@@ -162,28 +162,20 @@ fast_ssh_opts() {
 	-o StrictHostKeyChecking=no
 }
 
-fast_ssh_cmd() {
+fast_ssh() {
 	local user host
 	user=$1
 	host=$2
 	shift 2
-	echo ssh -tq \
+	ssh -tq \
 	$(fast_ssh_opts) \
 	$user@$host $@
 }
 
-fast_scp_cmd() {
-	echo scp \
+fast_scp() {
+	scp \
 	$(fast_ssh_opts) \
 	$@
-}
-
-fast_ssh() {
-	$(fast_ssh_cmd $@)
-}
-
-fast_scp() {
-	$(fast_scp_cmd $@)
 }
 
 gen_id() {
@@ -506,7 +498,7 @@ cmd_cloud_bin() {
 			cmd=$target
 		fi
 		name=$(container_expand_name rails)
-		container_exec $name /rails/$cmd $@
+		container_exec $name $cmd $@
 	else
 		alt=$(which -a $target | grep -A 1 $abs_path | tail -n 1)
 		if [ -z "$alt" ]; then
@@ -657,11 +649,14 @@ cloud_refresh_hosts() {
 		for namespace in $namespaces; do
 			name=$(echo $namespace | rev | cut -d - -f 2- | rev)
 			env=$(echo $namespace | rev | cut -d - -f 1 | rev)
-			if [ $env = test ] || container_list_all_created | grep -q ${name}-${env}-rails; then
+			if container_list_all_created | grep -q ${name}-${env}-rails; then
 				line+=" ${app_name}-$env.$vm_name"
+				if [ $env = development ]; then
+					line+=" ${app_name}-test.$vm_name"
+				fi
 			fi
 		done
-		if ! echo $namespaces | grep -q ${app_name}-$cloud_env; then
+		if ! (echo $namespaces | grep -q ${app_name}-$cloud_env); then
 			line+=" ${app_name}-$cloud_env.$vm_name"
 			if [ $cloud_env = development ]; then
 				line+=" ${app_name}-test.$vm_name"
@@ -1183,16 +1178,19 @@ cmd_container_list() {
 }
 
 cmd_container_exec() {
-  local name
+  local long_name short_name
+	long_name=$1
+	short_name=$2
 	if [ -t 0 ]; then
 		if [ $# -gt 2 ] && [ "$3" = -- ]; then
-			name=$1
 			shift 3
 		else
 			error Wrong format
 		fi
+	else
+		shift 2
 	fi
-	container_exec $name $@
+	container_exec $long_name $short_name $@
 }
 
 cmd_container_deploy() {
@@ -1234,7 +1232,7 @@ cmd_container_export() {
 cmd_container_restore() {
 	local path
 	container_delete $1
-	container_assign_ip $1
+	container_assign_ip $1 $2
 	path=/tmp/$1-restore
 	node_ssh <<-SSH
 		mkdir -p $path
@@ -1266,11 +1264,11 @@ cmd_container_help() {
 }
 
 container_exec() {
-	local name
-	name=$1
+	local long_name
+	long_name=$1
 	shift
-	container_ensure_instance $name
-	container_ssh $name $@
+	container_ensure_instance $long_name
+	container_ssh $long_name $@
 }
 
 container_deploy() {
@@ -1340,23 +1338,33 @@ container_safe_delete_one() {
 }
 
 container_delete_one() {
+	local hosts_paths path
 	container_stop_one $1 $2
 	printf "Deleting container $2 ..."
+	hosts_paths="$hosts_path $jail_hosts_path"
+	if [ $2 = rails ]; then
+		node_ssh <<-SSH
+			for path in $hosts_paths; do
+				sed -i '' 's/ $app_name-test.cloud.local//' \$path
+			done
+		SSH
+	fi
 	node_ssh <<-SSH
 		rm $jail_fstab_path/$1
 		rm -f /tmp/root@$1
 		umount -f $fs_data_path/$1
 		zfs destroy -R $fs_data_path/$1
 		sed -i '' "/$1 { .* }/d" $jail_conf_path
-		sed -i '' "/.* $1/d" $jail_hosts_path
 		sed -i '' "/$1 .*/d" $ingress_hosts_path
-		sed -i '' "/.* $1/d" $hosts_path
+		for path in $hosts_paths; do
+			sed -i '' "/.* $1/d" \$path
+		done
 	SSH
-	node_reload_ingress
 	if [ -z "$(container_list_created)" ]; then
 		rm -f "$app_branch_path"
 	fi
 	echo DONE!
+	node_reload_ingress
 }
 
 container_stop() {
@@ -1489,7 +1497,7 @@ container_ensure_no_dependents_running() {
 }
 
 container_create() {
-	container_assign_ip $1
+	container_assign_ip $1 $2
 	node_ssh <<-SSH
 		zfs clone $fs_skel_path@last $fs_data_path/$1
 	SSH
@@ -1679,23 +1687,31 @@ container_jls() {
 }
 
 container_ssh() {
-	local long_name short_name home_name home_path cmd
+	local long_name short_name args cmd cd
 	long_name=$1
-	shift
-	short_name=$(container_collapse_name $long_name)
-	home_name=${short_name}_home
-	home_path=${!home_name}
-	cmd=$@
-	if [ ! -z "$home_path" ] && ([ ! -t 0 ] || [ ! -z "$cmd" ]); then
-		if [ ! -t 0 ]; then
-			cmd="$(cat -)"
+	short_name=$2
+	shift 2
+	args=$@
+	cmd="node_ssh jexec $long_name su - root"
+	cd="cd /rails >/dev/null 2>&1"
+	if [ -z "$args" ]; then
+		if [ -t 0 ]; then
+			if [ $short_name = rails ]; then
+				$cmd -c \"$cd \&\& sh\"
+			else
+				$cmd
+			fi
+		else
+			cat <<-SSH | $cmd
+				$cd
+				$(cat -)
+			SSH
 		fi
-		cat <<-SSH | node_ssh $(fast_ssh_cmd root $long_name)
-			cd $home_path
-			$cmd
-		SSH
 	else
-		node_ssh $(fast_ssh_cmd root $long_name $cmd)
+		if [ $short_name = rails ]; then
+			args="$cd && $args"
+		fi
+		$cmd -c \"$args\"
 	fi
 }
 
@@ -1726,11 +1742,20 @@ container_next_ip() {
 }
 
 container_assign_ip() {
-	local ip
+	local ip hosts_paths
 	ip=$(container_next_ip)
+	hosts_paths="$hosts_path $jail_hosts_path"
+	if [ $2 = rails ]; then
+		node_ssh <<-SSH
+			for path in $hosts_paths; do
+				sed -i '' 's/ system-ingress/ system-ingress $app_name-test.cloud.local/' \$path
+			done
+		SSH
+	fi
 	node_ssh <<-SSH
-		echo '$ip $1' >> $hosts_path
-		echo '$ip $1' >> $jail_hosts_path
+		for path in $hosts_path; do
+			echo '$ip $1' >> \$path
+		done
 		mkdir -p $ingress_nginx_path
 		echo '$1 $ip;' >> $ingress_hosts_path
 		echo '$1 { ip4.addr = $ip; }' >> $jail_conf_path
@@ -2011,39 +2036,7 @@ vm_disable_send_ips() {
 }
 
 vm_ssh() {
-	local pre cmd
-	cmd="fast_ssh $vm_user $vm_host"
-	if [ $cloud_context = local ]; then
-		case $PWD in
-		$HOME*)
-			pre="cd '$PWD' >/dev/null 2>&1"
-		;;
-		esac
-	fi
-	if [ ! -z "$pre" ]; then
-		if [ $# -gt 0 ]; then
-			if [ ! -t 0 ]; then
-				cat <<-ARGS | $cmd $@
-					$pre
-					$(cat -)
-				ARGS
-			else
-				cat <<-ARGS | $cmd
-					$pre
-					$@
-				ARGS
-			fi
-		elif [ ! -t 0 ]; then
-			cat <<-ARGS | $cmd
-				$pre
-				$(cat -)
-			ARGS
-		else
-			$cmd
-		fi
-	else
-		$cmd $@
-	fi
+	fast_ssh $vm_user $vm_host $@
 }
 
 vm_download() {
