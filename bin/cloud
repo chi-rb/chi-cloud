@@ -498,7 +498,7 @@ cmd_cloud_bin() {
 			cmd=$target
 		fi
 		name=$(container_expand_name rails)
-		container_exec $name $cmd $@
+		container_exec -c $name $cmd $@
 	else
 		alt=$(which -a $target | grep -A 1 $abs_path | tail -n 1)
 		if [ -z "$alt" ]; then
@@ -1787,7 +1787,9 @@ container_assign_ip() {
 		echo '$1 $ip;' >> $ingress_hosts_path
 		echo '$1 { ip4.addr = $ip; }' >> $jail_conf_path
 	SSH
-	node_reload_ingress
+	if container_exists system-ingress; then
+		node_reload_ingress
+	fi
 }
 
 # NODE
