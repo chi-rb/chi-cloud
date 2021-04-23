@@ -1787,7 +1787,7 @@ container_assign_ip() {
 		echo '$1 $ip;' >> $ingress_hosts_path
 		echo '$1 { ip4.addr = $ip; }' >> $jail_conf_path
 	SSH
-	if container_exists system-ingress; then
+	if [ $2 != system-ingress ]; then
 		node_reload_ingress
 	fi
 }
