@@ -1780,7 +1780,7 @@ container_assign_ip() {
 		SSH
 	fi
 	node_ssh <<-SSH
-		for path in $hosts_path; do
+		for path in $hosts_paths; do
 			echo '$ip $1' >> \$path
 		done
 		mkdir -p $ingress_nginx_path
