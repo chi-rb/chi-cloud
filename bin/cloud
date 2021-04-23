@@ -1190,7 +1190,7 @@ cmd_container_exec() {
 	else
 		shift 2
 	fi
-	container_exec $long_name $@
+	container_exec -c $long_name $@
 }
 
 cmd_container_deploy() {
@@ -1245,7 +1245,7 @@ cmd_container_restore() {
 
 cmd_container_shell() {
 	container_ensure_instance $1
-	container_ssh $1
+	container_ssh -c $1
 }
 
 cmd_container_help() {
@@ -1264,11 +1264,24 @@ cmd_container_help() {
 }
 
 container_exec() {
-	local long_name
+	local OPTIND option change long_name args
+	while getopts ':c' option; do
+		case $option in
+		c)
+			change=true
+		;;
+		esac
+	done
+	shift $((OPTIND-1))
 	long_name=$1
 	shift
 	container_ensure_instance $long_name
-	container_ssh $long_name $@
+	args="$long_name $@"
+	if [ "$change" = true ]; then
+		container_ssh -c $args
+	else
+		container_ssh $args
+	fi
 }
 
 container_deploy() {
@@ -1687,7 +1700,15 @@ container_jls() {
 }
 
 container_ssh() {
-	local long_name short_name args cmd cd
+	local OPTIND option change long_name short_name args cmd cd
+	while getopts ':c' option; do
+		case $option in
+		c)
+			change=true
+		;;
+		esac
+	done
+	shift $((OPTIND-1))
 	long_name=$1
 	if [ ! -z "$app_name" ]; then
 		short_name=$(container_collapse_name $1)
@@ -1695,22 +1716,26 @@ container_ssh() {
 	shift
 	args=$@
 	cmd="node_ssh jexec $long_name su - root"
-	cd="cd /rails >/dev/null 2>&1"
+	cd="cd /rails"
 	if [ -z "$args" ]; then
 		if [ -t 0 ]; then
-			if [ "$short_name" = rails ]; then
+			if [ "$change" = true ] && [ "$short_name" = rails ]; then
 				$cmd -c \"$cd \&\& sh\"
 			else
 				$cmd
 			fi
 		else
-			cat <<-SSH | $cmd
-				$cd
-				$(cat -)
-			SSH
+			if [ "$change" = true ] && [ "$short_name" = rails ]; then
+				cat <<-SSH | $cmd
+					$cd
+					$(cat -)
+				SSH
+			else
+				$cmd
+			fi
 		fi
 	else
-		if [ "$short_name" = rails ]; then
+		if [ "$change" = true ] && [ "$short_name" = rails ]; then
 			args="$cd && $args"
 		fi
 		$cmd -c \"$args\"
