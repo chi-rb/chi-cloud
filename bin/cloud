@@ -1190,7 +1190,7 @@ cmd_container_exec() {
 	else
 		shift 2
 	fi
-	container_exec $long_name $short_name $@
+	container_exec $long_name $@
 }
 
 cmd_container_deploy() {
@@ -1689,14 +1689,16 @@ container_jls() {
 container_ssh() {
 	local long_name short_name args cmd cd
 	long_name=$1
-	short_name=$2
-	shift 2
+	if [ ! -z "$app_name" ]; then
+		short_name=$(container_collapse_name $1)
+	fi
+	shift
 	args=$@
 	cmd="node_ssh jexec $long_name su - root"
 	cd="cd /rails >/dev/null 2>&1"
 	if [ -z "$args" ]; then
 		if [ -t 0 ]; then
-			if [ $short_name = rails ]; then
+			if [ "$short_name" = rails ]; then
 				$cmd -c \"$cd \&\& sh\"
 			else
 				$cmd
@@ -1708,7 +1710,7 @@ container_ssh() {
 			SSH
 		fi
 	else
-		if [ $short_name = rails ]; then
+		if [ "$short_name" = rails ]; then
 			args="$cd && $args"
 		fi
 		$cmd -c \"$args\"
