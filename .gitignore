@@ -1,9 +1,10 @@
 .DS_Store
 
-vm/userboot.so
-vm/install.iso
-vm/disk.img
-vm/disk.img.xz
-vm/disk.img.bak
+server/userboot.so
+server/install.iso
+server/disk.img
+server/disk.img.xz
+server/disk.img.bak
 
 tmp
+run

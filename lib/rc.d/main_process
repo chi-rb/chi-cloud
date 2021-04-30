@@ -1,0 +1,31 @@
+#!/bin/sh
+
+# PROVIDE: main_process
+# REQUIRE: LOGIN cleanvar
+# KEYWORD: shutdown
+
+PATH=$PATH:/usr/local/bin:/usr/local/sbin
+
+. /etc/rc.subr
+. /etc/profile
+
+name=main_process
+load_rc_config $name
+
+rcvar=${name}_enable
+start_cmd=${name}_start
+stop_cmd=${name}_stop
+
+run_as_root() {
+  su - root /usr/local/bin/main_process $@ >> /var/log/main_process.log 2>&1 &
+}
+
+main_process_start() {
+  run_as_root start
+}
+
+main_process_stop() {
+  run_as_root stop
+}
+
+run_rc_command "$1"

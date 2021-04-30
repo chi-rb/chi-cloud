@@ -1,0 +1,14 @@
+#!/bin/sh
+
+nginx_path=/usr/local/etc/nginx
+
+pkg install -y \
+nginx \
+py37-certbot \
+py37-certbot-nginx \
+py37-certbot-dns-cloudflare
+
+for target in proxy.conf nginx.conf hosts.map; do
+	cp /mnt/$target $nginx_path
+done
+touch $nginx_path/hosts
