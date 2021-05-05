@@ -77,16 +77,20 @@ ingress_cert_path=$ingress_ssl_path/fullchain.pem
 ingress_hosts_path=$ingress_nginx_path/hosts
 ingress_vols='ssl:/ssl nginx:/usr/local/etc/nginx'
 
-server_user=root
-server_ip_range=10
+server_local_user=root
+server_local_ip_range=10
+server_local_domain=$name.local
+server_local_mem=4G
+server_local_cpus=4
+server_local_id=8299FDAA-4CC0-4FF2-AE5B-A1E1DEC574D7
 
 net_setting_names=(
 	mac_ip
-	server_ip
+	server_local_ip
 )
 user_setting_names=(
-	server_mem
-	server_cpus
+	server_local_mem
+	server_local_cpus
 )
 user_setting_descs=(
 	'Server memory'
@@ -158,13 +162,8 @@ fast_ssh_opts() {
 	-o StrictHostKeyChecking=no
 	SH
 	)
-	if [ $cloud_context != local ]; then
-		path=/tmp/$server_ip.pem
-		if [ ! -f $path ] || [ "$(cat $path)" != "$server_ssh_key" ]; then
-			echo "$server_ssh_key" > $path
-			chmod 600 $path
-		fi
-		echo $opts -i $path
+	if [ $cloud_context != local ] && [ ! -z "$cloud_ssh_key" ]; then
+		echo $opts -i "$cloud_ssh_key"
 	else
 		echo $opts
 	fi
@@ -183,6 +182,7 @@ fast_ssh() {
 fast_scp() {
 	scp \
 	$(fast_ssh_opts) \
+	-C \
 	$@
 }
 
@@ -210,6 +210,12 @@ fs_exists() {
 	fs_list | grep -q $path
 }
 
+fs_read_size() {
+	server_ssh <<-SSH
+		du -sh $1 | awk '{print \$1}'
+	SSH
+}
+
 # MAC
 
 mac_ensure_ver() {
@@ -219,9 +225,9 @@ mac_ensure_ver() {
 }
 
 mac_delete_conf() {
-	local OPTIND o precmd target_group target_name i name value group
-	while getopts ':s' o; do
-		case "$o" in
+	local OPTIND option precmd target_group target_name i name value group
+	while getopts ':s' option; do
+		case "$option" in
 		s)
 			precmd=sudo
 		;;
@@ -251,9 +257,9 @@ mac_delete_conf() {
 }
 
 mac_add_conf() {
-	local OPTIND o precmd group name conf
-	while getopts ':s:' o; do
-		case "$o" in
+	local OPTIND option precmd group name conf
+	while getopts ':s:' option; do
+		case "$option" in
 		s)
 			$precmd=sudo
 		;;
@@ -293,9 +299,9 @@ mac_edit_file() {
 }
 
 mac_add_line() {
-	local OPTIND o precmd
-	while getopts ':s' o; do
-		case "$o" in
+	local OPTIND option precmd
+	while getopts ':s' option; do
+		case "$option" in
 		s)
 			precmd=sudo
 		;;
@@ -310,9 +316,9 @@ mac_add_line() {
 }
 
 mac_delete_line() {
-	local OPTIND o precmd
-	while getopts ':s' o; do
-		case "$o" in
+	local OPTIND option precmd
+	while getopts ':s' option; do
+		case "$option" in
 		s)
 			precmd=sudo
 		;;
@@ -529,11 +535,15 @@ cmd_cloud_open() {
 	local url
 	app_load
 	if [ $cloud_context = local ]; then
-		url=$app_name-$cloud_env.$server_domain
+		url=https://$app_name-$cloud_env.$server_domain
 	else
-		url=$server_domain
+		if [ -z $server_domain ]; then
+			url=http://$server_ip
+		else
+			url=https://$server_domain
+		fi
 	fi
-	open https://$url
+	open $url
 }
 
 cmd_cloud_bin() {
@@ -682,7 +692,8 @@ cloud_clone() {
 	if [ -d $local_path ]; then
 		echo Already exists
 	else
-		git clone $github_url --single-branch --branch $branch $local_path
+		#git clone $github_url --single-branch --branch $branch $local_path
+		sudo cp -r ~/Documents/Software/Tools/Ruby/Chi/Cloud/Code $local_path
 		sudo chown $USER:admin $local_path
 		mkdir -p $local_run_path
 		mkdir -p $local_transfers_path
@@ -722,11 +733,10 @@ cloud_refresh_hosts() {
 }
 
 cloud_config() {
+	cloud_context=${CLOUD_CONTEXT:-local}
 	cloud_key=$CLOUD_KEY
-	if [ -z $cloud_context ]; then
-		cloud_context=${CLOUD_CONTEXT:-local}
-	fi
-	if [ -z $cloud_env ]; then
+	cloud_ssh_key=$CLOUD_SSH_KEY
+	if [ -z $CLOUD_ENV ]; then
 		if [ -z $RAILS_ENV ]; then
 			if [ $cloud_context != local ]; then
 				cloud_env=production
@@ -737,11 +747,15 @@ cloud_config() {
 			cloud_env=$RAILS_ENV
 		fi
 	fi
+	cloud_read_ini $local_conf_path
 	if [ $cloud_context = local ]; then
-		server_domain=$name.local
-		server_mem=4G
-		server_cpus=4
-		server_id=8299FDAA-4CC0-4FF2-AE5B-A1E1DEC574D7
+		server_user=$server_local_user
+		server_ip_range=$server_local_ip_range
+		server_domain=$server_local_domain
+		server_ip=$server_local_ip
+		server_mem=$server_local_mem
+		server_cpus=$server_local_cpus
+		server_id=$server_local_id
 	fi
 }
 
@@ -753,17 +767,14 @@ cloud_load() {
 
 cloud_boot() {
 	local context_path
-	if [ $cloud_context = local ]; then
-		if [ -f $local_conf_path ]; then
-			cloud_read_ini $local_conf_path
-		fi
-	else
+	if [ $cloud_context != local ]; then
 		context_path=$PWD/cloud/contexts/$cloud_context
 		if [ -f $context_path ]; then
 			cloud_read_ini $context_path
 		else
 			error Context not found
 		fi
+		echo "** Executing on context \"$cloud_context\" **\n"
 	fi
 }
 
@@ -778,6 +789,7 @@ cloud_ensure_args() {
 
 cloud_delete_repo() {
 	if [ -d $local_path ]; then
+		echo $local_path
 		sudo rm -rf $local_path
 	else
 		echo Not found
@@ -811,16 +823,16 @@ cloud_delete_bins() {
 				path+=-$branch
 			fi
 			if [ -f $path ]; then
-				rm $path
+				rm -v $path
 			fi
 		done
 	fi
 }
 
 cloud_read_ini() {
-	local o callback path vars var name value group
-	while getopts ':c:' o; do
-		case $o in
+	local OPTIND option callback path vars var name value group
+	while getopts ':c:' option; do
+		case $option in
 		c)
 			callback=$OPTARG
 		;;
@@ -878,13 +890,11 @@ app_config() {
 	app_contexts_path=$app_cloud_path/contexts
 	app_context_path=$app_contexts_path/$cloud_context
 	app_local_path=$app_contexts_path/local
+	app_containers_path=$app_cloud_path/containers
 	app_envs_path=$app_cloud_path/environments
 	app_base_path=$app_envs_path/base
-	app_dev_path=$app_envs_path/development
-	app_prod_path=$app_envs_path/production
 	app_env_path=$app_envs_path/$cloud_env
 	app_tmp_path=$app_path/tmp/cloud
-	app_containers_path=$app_cloud_path/containers
 	app_jails=()
 }
 
@@ -929,8 +939,19 @@ app_add_jail() {
 		if ! $(app_jail_exists $long_name); then
 			export "${1}_host=$long_name"
 			export "${1}_name=$long_name"
-			if [ $cloud_context = local ] && [ $short_name = rails ]; then
-				rails_vols="rails:/rails $rails_vols"
+			if [ $short_name = rails ]; then
+				if [ $cloud_context = local ]; then
+					rails_vols="$rails_vols "
+					rails_vols+="rails:/rails"
+				else
+					rails_vols="$rails_vols "
+					rails_vols+="rails-tmp:/rails/tmp "
+					rails_vols+="rails-log:/rails/log "
+					rails_vols+="rails-bundle:/rails/vendor/bundle "
+					rails_vols+="rails-node:/rails/node_modules "
+					rails_vols+="rails-storage:/rails/storage "
+					rails_vols+="rails-assets:/rails/public/assets"
+				fi
 			fi
 			app_jails+=($long_name)
 		fi
@@ -1026,7 +1047,11 @@ branch_checkout_one() {
 # VOLUME
 
 cmd_volume_list() {
-	volume_list
+	local name
+	for name in $(volume_list); do
+		size=$(volume_read_size $name)
+		printf "%-20s %-10s\n" $name $size
+	done
 }
 
 cmd_volume_delete() {
@@ -1072,6 +1097,10 @@ volume_ensure_instance() {
 	fi
 }
 
+volume_read_size() {
+	fs_read_size $jail_shared_path/$app_id/$1
+}
+
 volume_ensure_no_dependents() {
 	local container vols
 	for container in $(container_list_created); do
@@ -1093,7 +1122,7 @@ volume_delete_all() {
 }
 
 volume_delete_one() {
-	printf "Deleting volume $2 ..."
+	printf "Deleting volume \"$2\" ... "
 	server_ssh <<-SSH
 		zfs destroy $fs_shared_path/$1
 	SSH
@@ -1142,7 +1171,15 @@ cmd_ingress_shell() {
 }
 
 cmd_ingress_build() {
-	image_build system-ingress ingress
+	if [ $cloud_context = local ]; then
+		image_build system-ingress ingress
+	else
+		error Can only run locally
+	fi
+}
+
+cmd_ingress_push() {
+	image_push system-ingress ingress
 }
 
 cmd_ingress_log() {
@@ -1150,14 +1187,12 @@ cmd_ingress_log() {
 }
 
 cmd_ingress_deploy() {
-	container_deploy system-ingress ingress
-	cloud_refresh_hosts
+	container_create system-ingress ingress system-ingress ingress
 }
 
 cmd_ingress_delete() {
 	local name
 	container_delete_one system-ingress ingress
-	image_delete system-ingress
 	for name in nginx ssl; do
 		volume_delete_one system/$name $name
 	done
@@ -1179,32 +1214,41 @@ cmd_ingress_help() {
 # IMAGE
 
 cmd_image_list() {
-	local long_name short_name
+	local long_name short_name size
 	for long_name in $(image_list); do
-		short_name=$(container_collapse_name $long_name)
-		echo $short_name
+		short_name=$(image_collapse_name $long_name)
+		size=$(image_read_size $long_name)
+		printf "%-20s %-10s\n" $short_name $size
 	done
 }
 
 cmd_image_build() {
-	local short_name long_name
-	short_name=$1
-	long_name=$(container_expand_name $short_name)
-	image_build $long_name $short_name
-	image_export $long_name $local_transfers_path
+	local short_name long_name base_var base_short_name base_long_name
+	if [ $cloud_context = local ]; then
+		short_name=$1
+		long_name=$(image_expand_name $short_name)
+		base_var="${short_name}_base"
+		base_short_name=${!base_var}
+		if [ ! -z $base_short_name ]; then
+			base_long_name=$(image_expand_name $base_short_name)
+		fi
+		image_build $long_name $short_name $base_long_name $base_short_name
+	else
+		error Can only build images locally
+	fi
 }
 
 cmd_image_push() {
 	local short_name long_name
 	short_name=$1
-	long_name=$(container_expand_name $short_name)
+	long_name=$(image_expand_name $short_name)
 	image_push $long_name $short_name
 }
 
 cmd_image_delete() {
 	local long_name short_name
 	short_name=$1
-	long_name=$(container_expand_name $short_name)
+	long_name=$(image_expand_name $short_name)
 	if image_exists $long_name; then
 		image_delete $long_name
 	else
@@ -1225,6 +1269,24 @@ cmd_image_help() {
 	DOC
 }
 
+image_read_size() {
+	fs_read_size $jail_repo_path/$1
+}
+
+image_read_date() {
+	server_ssh <<-SSH
+		stat -f %Sm $jail_repo_path/$1
+	SSH
+}
+
+image_expand_name() {
+	echo ${app_name}-${1} | dashify
+}
+
+image_collapse_name() {
+	echo $1 | sed "s/^${app_name}-//"
+}
+
 image_list_all() {
 	server_ssh <<-SSH
 		ls $jail_repo_path
@@ -1232,9 +1294,7 @@ image_list_all() {
 }
 
 image_list() {
-	server_ssh <<-SSH
-		ls $jail_repo_path | grep ^${app_name}-${cloud_env}-[^\ ]*
-	SSH
+	image_list_all | grep ^${app_name}-[^\ ]*
 }
 
 image_exists() {
@@ -1248,25 +1308,27 @@ image_delete() {
 }
 
 image_build() {
-	local short_name unprefixed_long_name container_path daemon_path \
-	build_path requires_name vols_name requires_value vols_value data_path \
-	rc_path bin_path main_process_bin_path main_process_rc_path fs_old_path \
-	fs_new_path
+	local short_name long_name suffixed_name container_path \
+	main_process_path build_path requires_name vols_name \
+	requires_value vols_value data_path rc_path bin_path \
+	main_process_bin_path main_process_rc_path fs_old_path \
+	fs_new_path snap_path
+	long_name=$1
 	short_name=$2
-	unprefixed_long_name=$1
-	local long_name=${unprefixed_long_name}--build # TODO: Local variables no working?
-	if echo $unprefixed_long_name | grep -q ^system-.*; then
+	suffixed_name=${long_name}--build
+	if echo $long_name | grep -q ^system-.*; then
 		container_path=$local_lib_path/$short_name
 	else
 		container_path="$app_containers_path/$short_name"
 	fi
-	daemon_path="$container_path/daemon"
+	main_process_path="$container_path/main_process"
 	build_path="$container_path/build"
-	if container_exists $long_name; then
-		container_delete_one $long_name $short_name
+	begin Initializing Jail
+	if container_exists $suffixed_name; then
+		container_delete_one $suffixed_name $short_name
 	fi
-	if image_exists $unprefixed_long_name; then
-		image_delete $unprefixed_long_name
+	if image_exists $long_name; then
+		image_delete $long_name
 	fi
 	requires_name="${short_name}_requires"
 	vols_name="${short_name}_vols"
@@ -1274,9 +1336,9 @@ image_build() {
 	vols_value=${!vols_name}
 	unset $requires_name
 	export "$vols_name=mnt"
-	container_create $long_name $short_name
-	if [ -f "$daemon_path" ]; then
-		data_path=$jail_data_path/$long_name
+	container_create $suffixed_name $short_name $3 $4
+	if [ -f "$main_process_path" ]; then
+		data_path=$jail_data_path/$suffixed_name
 		rc_path=$data_path/usr/local/etc/rc.d
 		main_process_rc_path=$rc_path/main_process
 		bin_path=$data_path/usr/local/bin
@@ -1285,56 +1347,71 @@ image_build() {
 			mkdir -p $rc_path
 			mkdir -p $bin_path
 			cp $local_lib_path/rc.d/main_process $main_process_rc_path
-			cp "$daemon_path" $main_process_bin_path
+			cp "$main_process_path" $main_process_bin_path
 			chmod +x $main_process_rc_path
 			chmod +x $main_process_bin_path
 		SSH
 	fi
-	cat <<-SSH | container_ssh $long_name
+	begin Executing Build
+	cat <<-SSH | container_ssh $suffixed_name
 		$(cat "$build_path")
 	SSH
 	if [ $? != 0 ]; then
-		container_delete_one $long_name $short_name
-		echo "\nBuild failed"
+		container_delete_one $suffixed_name $short_name
+		error Build failed
 	else
-		echo "\nBuild succeed"
-		if [ -f "$daemon_path" ]; then
-			cat <<-SSH | container_ssh $long_name
+		begin Registering Image
+		if [ -f "$main_process_path" ]; then
+			cat <<-SSH | container_ssh $suffixed_name
 				service main_process enable
 			SSH
 		fi
-		container_stop_one $long_name $short_name
-		fs_old_path=$fs_data_path/$long_name
-		fs_new_path=$fs_repo_path/$unprefixed_long_name
+		container_stop_one $suffixed_name $short_name
+		fs_old_path=$fs_data_path/$suffixed_name
+		fs_new_path=$fs_repo_path/$long_name
+		snap_path=$fs_new_path@last
 		server_ssh <<-SSH
 			umount -f $fs_old_path
 			zfs rename $fs_old_path $fs_new_path
-			zfs snapshot $fs_new_path@last
+			if zfs list -H -o name -t snapshot | grep -q $snap_path; then
+				zfs destroy $snap_path
+			fi
+			zfs snapshot $snap_path
 			zfs mount $fs_new_path
 		SSH
-		container_delete_one $long_name $short_name
+		container_delete_one $suffixed_name $short_name
 	fi
 	export "$requires_name=$requires_value"
 	export "$vols_name=$vols_value"
 }
 
 image_push() {
-	local tar_name tar_path zfs_path
+	local tar_name tar_path zfs_path fs_path
 	tar_name=$1.tar.gz
 	tar_path=$local_transfers_path/$tar_name
 	zfs_path=$local_transfers_path/$1
 	if [ $cloud_context != local ]; then
+		begin Compressing Image
+		image_export $1
+		begin Transferring Image
 		server_ssh <<-SSH
 			if [ -f $tar_path ]; then
 				rm $tar_path
 			fi
 		SSH
 		fast_scp $tar_path $server_user@$server_ip:$tar_path
-		server_ssh <<-SSH
-			tar -C $local_transfers_path -xvvf $tar_path
-			zfs receive $fs_repo_path/$1 < $zfs_path
-			rm $zfs_path
-		SSH
+		begin Registering Image
+		if [ $cloud_context != registry ]; then
+			fs_path=$fs_repo_path/$1
+			server_ssh <<-SSH
+				tar -C $local_transfers_path -xvvf $tar_path
+				if zfs list -H -o name -t snapshot | grep -q $fs_path; then
+					zfs destroy -r $fs_path
+				fi
+				zfs receive $fs_path < $zfs_path
+				rm $zfs_path $tar_path
+			SSH
+		fi
 	else
 		error Must be executed remotely
 	fi
@@ -1357,9 +1434,9 @@ image_pull() {
 
 image_export() {
 	local tar_path zfs_path
-	zfs_path=$2/$1
+	zfs_path=$local_transfers_path/$1
 	tar_path=$zfs_path.tar.gz
-	server_ssh <<-SSH
+	cat <<-SSH | server_ssh -l
 		if [ -f $tar_path ]; then
 			rm $tar_path
 		fi
@@ -1367,6 +1444,39 @@ image_export() {
 		tar -C $local_transfers_path -czvf $tar_path $1
 		rm $zfs_path
 	SSH
+}
+
+# CONTEXT
+
+cmd_context_list() {
+	local name line
+	for name in $(context_list); do
+		line=$name
+		if [ $cloud_context = $name ]; then
+			line+=" *"
+		fi
+		echo "$line"
+	done
+}
+
+cmd_context_help() {
+	unknown $1
+	cat <<-DOC
+		Usage: cloud context <command> [options]
+
+		Available commands:
+			list          Lists all names
+			help          Prints documentation
+	DOC
+}
+
+context_list() {
+	local list
+	list=$(ls "$app_contexts_path")
+	if ! (echo "$list" | grep -q local); then
+		list+="\nlocal"
+	fi
+	echo "$list"
 }
 
 # CONTAINER
@@ -1409,7 +1519,6 @@ cmd_container_deploy() {
 		long_name=$(container_expand_name $1)
 		container_deploy $long_name $short_name
 	fi
-	cloud_refresh_hosts
 }
 
 cmd_container_log() {
@@ -1519,6 +1628,9 @@ container_deploy() {
 	else
 		container_safe_deploy_one $1 $2
 	fi
+	if [ $? != 0 ]; then
+		cloud_refresh_hosts
+	fi
 }
 
 container_deploy_all() {
@@ -1548,12 +1660,23 @@ container_safe_deploy_one() {
 }
 
 container_deploy_one() {
-	if [ $cloud_context = local ] && ! image_exists $1; then
-		begin Building image $2
-		image_build $1 $2
+	local image_short_name image_long_name base_var base_short_name base_long_name
+	image_short_name=$2
+	image_long_name=$(image_expand_name $2)
+	base_var="$2_base"
+	base_short_name=${!base_var}
+	if [ -z $base_short_name ]; then
+		base_short_name=$image_short_name
+		base_long_name=$image_long_name
+	else
+		base_long_name=$(image_expand_name $base_short_name)
 	fi
-	begin Deploying container $2
-	container_create $1 $2
+	if [ $cloud_context = local ] && ! image_exists $image_long_name; then
+		begin Building image \"$2\"
+		image_build $image_long_name $2 $base_long_name $base_short_name
+	fi
+	begin Deploying container \"$2\"
+	container_create $1 $2 $image_long_name $image_short_name
 }
 
 container_delete() {
@@ -1579,9 +1702,25 @@ container_safe_delete_one() {
 }
 
 container_delete_one() {
-	local hosts_paths path
-	container_stop_one $1 $2 # TODO: Move out of this method
-	printf "Deleting container $2 ..."
+	begin "Deleting container \"$2\""
+	if container_running $1; then
+		container_stop_one $1 $2
+	fi
+	container_delete_ip $1 $2
+	if fs_exists $1; then
+		server_ssh <<-SSH
+			rm $jail_fstab_path/$1
+			umount -f $fs_data_path/$1
+			zfs destroy -r $fs_data_path/$1
+		SSH
+	fi
+	if [ -z "$(container_list_created)" ]; then
+		rm -f "$app_branch_path"
+	fi
+}
+
+container_delete_ip() {
+	local hosts_paths build name
 	hosts_paths="$hosts_path $jail_hosts_path"
 	build=$(container_is_build $1 && echo true)
 	if [ "$build" != true ] && [ $2 = rails ]; then
@@ -1591,24 +1730,22 @@ container_delete_one() {
 			done
 		SSH
 	fi
-	if [ "$build" != true ]; then
-		server_ssh <<-SSH
-			rm $jail_fstab_path/$1
-			umount -f $fs_data_path/$1
-			zfs destroy -r $fs_data_path/$1
-		SSH
-	fi
 	server_ssh <<-SSH
 		sed -i '' "/$1 { .* }/d" $jail_conf_path
-		sed -i '' "/$1 .*/d" $ingress_hosts_path
 		for path in $hosts_paths; do
 			sed -i '' "/.* $1/d" \$path
 		done
 	SSH
-	if [ -z "$(container_list_created)" ]; then
-		rm -f "$app_branch_path"
+	if [ $2 = rails ]; then
+		if [ $cloud_context = local ]; then
+			name=$1
+		else
+			name=rails
+		fi
+		server_ssh <<-SSH
+			sed -i '' "/$name .*/d" $ingress_hosts_path
+		SSH
 	fi
-	echo DONE!
 	if [ "$build" != true ] && [ $1 != system-ingress ]; then
 		server_reload_ingress
 	fi
@@ -1744,30 +1881,29 @@ container_ensure_no_dependents_running() {
 }
 
 container_create() {
-	local image path
+	local build new_path repo_path
 	container_assign_ip $1 $2
-	image=$(image_exists $1 && echo true)
-	path=$fs_data_path/$1
-	if [ "$image" = true ]; then
+	build=$(container_is_build $1 && echo true)
+	new_path=$fs_data_path/$1
+	if [ "$build" = true ] && [ -z "$3" ]; then
 		server_ssh <<-SSH
-			zfs send $fs_repo_path/$1@last | zfs receive $path
+			zfs clone $fs_skel_path@last $new_path
 		SSH
 	else
-		server_ssh <<-SSH
-			zfs clone $fs_skel_path@last $path
-		SSH
+		repo_path=$fs_repo_path/$3
+		if image_exists $3; then
+			server_ssh <<-SSH
+				zfs send $repo_path@last | zfs receive $new_path
+			SSH
+		else
+			error Image $4 not found
+		fi
 	fi
 	container_config $1 $2
-	if [ $cloud_context != local ] && [ $2 = rails ]; then
-		server_ssh <<-SSH
-			rmdir $path/rails
-			cp -r "$app_path" $path/rails
-		SSH
-	fi
 	server_ssh <<-SSH
 		jail -c $1
 	SSH
-	if [ "$image" != true ]; then
+	if [ "$build" = true ] && [ -z "$3" ]; then
 		server_ssh <<-SSH
 			jexec $1 chsh -s /bin/sh
 		SSH
@@ -1822,7 +1958,7 @@ container_list_dependent() {
 }
 
 container_exists() {
-	container_list_all_created | grep -q $1
+	container_list_all_created | grep -q ^$1$
 }
 
 container_service() {
@@ -1889,7 +2025,7 @@ container_gen_fstab() {
 			case $1 in
 			system-*)
 				if [ $vol_name = mnt ]; then
-					shared_path=$local_lib_path/$2/mnt
+					shared_path=$local_path
 					vol_path=$data_path/mnt
 				else
 					rel_path=/system/$vol_name
@@ -1905,7 +2041,7 @@ container_gen_fstab() {
 					vol_path=$data_path/rails
 				;;
 				mnt)
-					shared_path=$app_containers_path/$2/mnt
+					shared_path=$app_path
 					vol_path=$data_path/mnt
 				;;
 				*)
@@ -1926,8 +2062,8 @@ container_gen_fstab() {
 				SSH
 			fi
 			server_ssh <<-SSH
-				mkdir -p $vol_path
-				if [ -d "$shared_path" ] && [ -d $vol_path ]; then
+				if [ -d "$shared_path" ]; then
+					mkdir -p $vol_path
 					echo "$shared_path" $vol_path nullfs rw 0 0 >> $fstab_path
 				fi
 			SSH
@@ -1943,7 +2079,7 @@ container_gen_profile() {
 		echo '$ps1' > $path
 	SSH
 	prefix=$(echo $2 | underscore)
-	skips="name|host|port|vols|requires"
+	skips="name|base|host|port|vols|requires"
 	if [ $1 = system-ingress ]; then
 		skips+="$skips|hosts_path|nginx_path|shared_path|ssl_path"
 	fi
@@ -2039,7 +2175,7 @@ container_is_build() {
 }
 
 container_assign_ip() {
-	local ip hosts_paths build
+	local ip hosts_paths build name
 	ip=$(container_next_ip)
 	hosts_paths="$hosts_path $jail_hosts_path"
 	build=$(container_is_build $1 && echo true)
@@ -2054,10 +2190,19 @@ container_assign_ip() {
 		for path in $hosts_paths; do
 			echo '$ip $1' >> \$path
 		done
-		mkdir -p $ingress_nginx_path
-		echo '$1 $ip;' >> $ingress_hosts_path
 		echo '$1 { ip4.addr = $ip; }' >> $jail_conf_path
 	SSH
+	if [ $2 = rails ]; then
+		if [ $cloud_context = local ]; then
+			name=$1
+		else
+			name=rails
+		fi
+		server_ssh <<-SSH
+			mkdir -p $ingress_nginx_path
+			echo '$name $ip;' >> $ingress_hosts_path
+		SSH
+	fi
 	if [ "$build" != true ] && [ $1 != system-ingress ]; then
 		server_reload_ingress
 	fi
@@ -2254,6 +2399,8 @@ server_config() {
 server_set_prefs() {
 	server_ssh <<-SSH
 		chsh -s /bin/sh
+		zfs destroy -R $fs_skel_path@last
+		zfs snapshot $fs_skel_path@last
 	SSH
 	server_reset_session
 	server_ssh <<-SSH
@@ -2265,7 +2412,23 @@ server_set_prefs() {
 }
 
 server_ssh() {
-	fast_ssh $server_user $server_ip $@
+	local OPTIND option local user ip
+	while getopts ':l' option; do
+		case $option in
+		l)
+			local=true
+		;;
+		esac
+	done
+	shift $((OPTIND-1))
+	if [ "$local" = true ]; then
+		user=$server_local_user
+		ip=$server_local_ip
+	else
+		user=$server_user
+		ip=$server_ip
+	fi
+	fast_ssh $user $ip $@
 }
 
 server_update() {
@@ -2293,9 +2456,6 @@ server_jail_init() {
 			fetch $freebsd_url/\$name.txz -o /tmp
 			tar -xf /tmp/\$name.txz -C $jail_base_path
 		done
-		for name in resolv.conf localtime; do
-			cp /etc/\$name $jail_base_path/etc
-		done
 		freebsd-update --not-running-from-cron -b $jail_base_path fetch install
 		chflags -R noschg $jail_base_path/var/empty
 		for name in dev media mnt net proc root tmp var etc; do
@@ -2309,8 +2469,13 @@ server_jail_init() {
 		for name in bin include lib lib32 libdata libexec obj sbin share src tests; do
 			ln -s ../base/usr/\$name $jail_skel_path/usr
 		done
-		rm $jail_skel_path/etc/hosts
-		ln -s ../base/etc/hosts $jail_skel_path/etc
+		for name in resolv.conf localtime; do
+			cp /etc/\$name $jail_base_path/etc
+		done
+		for name in hosts resolv.conf localtime; do
+			rm -f $jail_skel_path/etc/\$name
+			ln -s ../base/etc/\$name $jail_skel_path/etc
+		done
 		mkdir $jail_skel_path/base
 		touch $jail_skel_path/root/.hushlogin
 
@@ -2385,7 +2550,7 @@ server_reset_session() {
 
 server_reload_ingress() {
 	cat <<-SSH | container_ssh system-ingress
-		service nginx onereload
+		main_process reload
 	SSH
 }
 
@@ -2399,7 +2564,7 @@ server_ingress_init() {
 		SSH
 	fi
 	if ! container_exists system-ingress; then
-		container_deploy_one system-ingress ingress
+		container_create system-ingress ingress system-ingress ingress
 	fi
 }
 
@@ -2422,22 +2587,25 @@ server_first_start() {
       fi
 		done
 		. $local_ips_path
+		server_ip=$server_local_ip
 		mac_add_conf $local_conf_path mac_ip
-		mac_add_conf $local_conf_path server_ip
+		mac_add_conf $local_conf_path server_local_ip
 		rm $local_ips_path
 		line="$server_ip $server_domain"
+		echo
 		mac_add_line -s $hosts_path "$line"
 		server_disable_send_ips
 	fi
 }
 
 server_delete_files() {
-	rm -rf $local_tmp_path/*
-	rm -rf $local_run_path/*
+	rm -rvf $local_tmp_path/*
+	rm -rvf $local_run_path/*
 }
 
 server_delete_host() {
 	if mac_host_exists; then
+		echo $server_domain
 		mac_delete_line -s $hosts_path $server_domain
 	else
 		echo Not found
@@ -2449,6 +2617,7 @@ server_unshare_dirs() {
 	if mac_exports_exists; then
 		for rel_path in $exports_paths; do
 			abs_path=$exports_data_path$rel_path
+			echo $abs_path
 			mac_delete_line -s $exports_path $abs_path 
 		done
 		mac_update_nfsd
@@ -2495,10 +2664,6 @@ trap 'kill 0' EXIT
 cloud_load
 
 case $1 in
-debug)
-	app_load
-	image_export icssp-development-mysql $local_transfers_path
-;;
 bin)
 	shift
 	cmd_cloud_bin $@
@@ -2530,15 +2695,15 @@ decrypt)
 	shift
 	cmd_cloud_decrypt $@
 ;;
-branch|volume|tunnel|ingress|image|container|server)
+branch|volume|tunnel|ingress|image|context|container|server)
 	group=$1
 	cmd=$2
 	shift 2
 	case $group in
-	branch|volume|tunnel|image|container)
+	branch|volume|tunnel|image|context|container)
 		app_load
 		case $group in
-		branch)
+		''|branch)
 			case $cmd in
 			list)
 				cmd_branch_list
@@ -2553,11 +2718,14 @@ branch|volume|tunnel|ingress|image|container|server)
 		;;
 		volume)
 			case $cmd in
-			list)
+			''|list)
 				cmd_volume_list
 			;;
 			delete)
 				cmd_volume_delete $1
+			;;
+			*)
+				cmd_volume_help $cmd
 			;;
 			esac
 		;;
@@ -2576,7 +2744,7 @@ branch|volume|tunnel|ingress|image|container|server)
 		;;
 		image)
 			case $cmd in
-			list)
+			''|list)
 				cmd_image_list
 			;;
 			build)
@@ -2593,9 +2761,18 @@ branch|volume|tunnel|ingress|image|container|server)
 			;;
 			esac
 		;;
+		context)
+			case $cmd in
+			''|list)
+				cmd_context_list
+			;;
+			*)
+				cmd_context_help $cmd
+			esac
+		;;
 		container)
 			case $cmd in
-			list)
+			''|list)
 				cmd_container_list
 			;;
 			log)
@@ -2684,6 +2861,9 @@ branch|volume|tunnel|ingress|image|container|server)
 		;;
 		build)
 			cmd_ingress_build
+		;;
+		push)
+			cmd_ingress_push
 		;;
 		deploy)
 			cmd_ingress_deploy

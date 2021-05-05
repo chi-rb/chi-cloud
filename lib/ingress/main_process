@@ -27,8 +27,8 @@ add_rails() {
 
 		  location / {
 		    include $proxy_path;
-		    set \$wanted_host $2-$3-rails;
-		    proxy_pass http://\$wanted_ip:$4;
+		    set \$wanted_host $2;
+		    proxy_pass http://\$wanted_ip:$3;
 		  }
 		}
 
@@ -108,9 +108,9 @@ start)
 	fi
 
 	if [ $CLOUD_CONTEXT = local ]; then
-		add_rails $(build_name development) \$app development 80
-		add_rails $(build_name test) \$app development 3000
-		add_rails $(build_name '(?<env>.+)') \$app \$env 80
+		add_rails $(build_name development) \$app-development-rails 80
+		add_rails $(build_name test) \$app-development-rails 3000
+		add_rails $(build_name '(?<env>.+)') \$app-\$env-rails 80
 	else
 		if [ $ssl = true ]; then
 			cat <<-CONF >> $ingress_path
@@ -122,7 +122,7 @@ start)
 
 			CONF
 		fi
-		add_rails $server_name $APP_NAME production 80
+		add_rails $server_name rails 80
 	fi
 
 	if [ $CLOUD_CONTEXT = local ] || [ -z $SERVER_DOMAIN ]; then
@@ -193,5 +193,8 @@ start)
 ;;
 stop)
 	service nginx onestop
+;;
+reload)
+	service nginx onereload
 ;;
 esac
