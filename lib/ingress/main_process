@@ -63,8 +63,8 @@ start)
 				redirect_domain=$(echo $server_name | sed 's/^www\.//')
 				naked_domain=$redirect_domain
 			else
-				redirect_domain=$server_name
-				naked_domain=$(echo $server_name | sed 's/^www\.//')
+				redirect_domain=www.$server_name
+				naked_domain=$server_name
 			fi
 			ssl=true
 			letsencrypt_path=/usr/local/etc/letsencrypt
@@ -168,24 +168,15 @@ start)
 			rm $req_path
 		fi
 	elif [ $ssl = true ]; then
-		ini_path=$letsencrypt_path/cloudflare.ini
-
 		if [ -d $live_path ]; then
 			certbot renew
 		else
-			cat <<-INI > $ini_path
-				dns_cloudflare_email = $DNS_USER
-				dns_cloudflare_api_key = $DNS_PASS
-			INI
-
 			certbot certonly \
+			--standalone \
 			-d $naked_domain \
-			-d *.$naked_domain \
 			-n \
 			--agree-tos \
-			--email $DNS_USER \
-			--dns-cloudflare \
-			--dns-cloudflare-credentials $ini_path
+			--email $SERVER_MAIL
 		fi
 	fi
 

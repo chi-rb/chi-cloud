@@ -708,6 +708,7 @@ cloud_clone() {
 cloud_refresh_hosts() {
 	if [ $cloud_context = local ]; then
 		local namespaces namespace line name env envs
+		begin Refreshing Hosts
 		line=$(echo $server_ip $server_domain)
 		namespaces=$(cat $hosts_path | grep $server_domain | cut -d ' ' -f 3- | sed "s/.$server_domain//g")
 		for namespace in $namespaces; do
@@ -1673,7 +1674,6 @@ container_deploy_one() {
 	fi
 	begin Deploying container \"$2\"
 	container_create $1 $2 $image_long_name $image_short_name
-	begin Refreshing Hosts
 	cloud_refresh_hosts
 }
 
@@ -2084,7 +2084,7 @@ container_gen_profile() {
 	vars=$(declare | grep "^${prefix}_" | egrep -v "^${prefix}_($skips)=")
 	vars+="\r$(declare | egrep "^cloud_(context|env)=")"
 	vars+="\r$(declare | egrep "^app_name=")"
-	vars+="\r$(declare | egrep "^server_(ip|domain)=")"
+	vars+="\r$(declare | egrep "^server_(ip|domain|mail)=")"
 	vars=$(echo "$vars" | tr '\r' '\n' | sed '/^$/d')
 	while read var; do
 		name=$(echo "$var" | cut -d = -f 1 | upcase)
