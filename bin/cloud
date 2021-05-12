@@ -692,8 +692,9 @@ cloud_clone() {
 	if [ -d $local_path ]; then
 		echo Already exists
 	else
-		git clone $github_url --single-branch --branch $branch $local_path
+		sudo mkdir -p $local_path
 		sudo chown $USER:admin $local_path
+		git clone $github_url --single-branch --branch $branch $local_path
 		mkdir -p $local_run_path
 		mkdir -p $local_transfers_path
 		if [ $? != 0 ]; then
