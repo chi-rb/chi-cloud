@@ -182,9 +182,6 @@ start)
 
 	service nginx onestart
 ;;
-stop)
-	service nginx onestop
-;;
 reload)
 	service nginx onereload
 ;;

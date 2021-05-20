@@ -15,17 +15,29 @@ load_rc_config $name
 rcvar=${name}_enable
 start_cmd=${name}_start
 stop_cmd=${name}_stop
+bin_path=/usr/local/bin
+screen_path=$bin_path/screen
+main_process_path=$bin_path/main_process
+log_path=/var/log/main_process
 
 run_as_root() {
-  su - root /usr/local/bin/main_process $@ >> /var/log/main_process.log 2>&1 &
+  su - root -c "$@"
 }
 
 main_process_start() {
-  run_as_root start
+ 	run_as_root "$screen_path -dmL \
+	-Logfile $log_path \
+	-S main_process \
+	$main_process_path"
+	run_as_root "$screen_path \
+	-S main_process \
+	-X hardstatus ignore"
 }
 
 main_process_stop() {
-  run_as_root stop
+	run_as_root "$screen_path \
+	-S main_process \
+	-X stuff ^C"
 }
 
 run_rc_command "$1"

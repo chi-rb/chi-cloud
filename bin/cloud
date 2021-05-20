@@ -830,7 +830,7 @@ cloud_delete_bins() {
 }
 
 cloud_read_ini() {
-	local OPTIND option callback path vars var name value group
+	local OPTIND option callback vars var name value group
 	while getopts ':c:' option; do
 		case $option in
 		c)
@@ -840,8 +840,8 @@ cloud_read_ini() {
 	done
 	shift $((OPTIND-1))
 	vars=()
-	for path in $@; do
-		if [ -f "$path" ]; then
+	while [ ! -z "$1" ]; do
+		if [ -f "$1" ]; then
 			while IFS=' = ' read name value; do
 				case $name in
 				\[*\])
@@ -865,8 +865,9 @@ cloud_read_ini() {
 						fi
 					fi
 				esac
-			done < "$path"
+			done < "$1"
 		fi
+		shift
 	done
 	for var in ${vars[@]}; do
 		eval export "$var"
@@ -919,7 +920,7 @@ app_ensure_env() {
 }
 
 app_boot() {
-	local name
+	local name path
 	cloud_read_ini \
 	-c app_add_jail \
 	"$app_base_path" \
@@ -1163,7 +1164,7 @@ cmd_tunnel_help() {
 # INGRESS
 
 cmd_ingress_restart() {
-	container_restart system-ingress ingress
+	container_restart_one system-ingress ingress
 }
 
 cmd_ingress_shell() {
@@ -1172,7 +1173,7 @@ cmd_ingress_shell() {
 
 cmd_ingress_build() {
 	if [ $cloud_context = local ]; then
-		image_build system-ingress ingress
+		image_build_one system-ingress ingress
 	else
 		error Can only run locally
 	fi
@@ -1180,6 +1181,10 @@ cmd_ingress_build() {
 
 cmd_ingress_push() {
 	image_push system-ingress ingress
+}
+
+cmd_ingress_export() {
+	image_export system-ingress
 }
 
 cmd_ingress_log() {
@@ -1223,16 +1228,15 @@ cmd_image_list() {
 }
 
 cmd_image_build() {
-	local short_name long_name base_var base_short_name base_long_name
+	local short_name long_name
 	if [ $cloud_context = local ]; then
-		short_name=$1
-		long_name=$(image_expand_name $short_name)
-		base_var="${short_name}_base"
-		base_short_name=${!base_var}
-		if [ ! -z $base_short_name ]; then
-			base_long_name=$(image_expand_name $base_short_name)
+		if [ -z "$1" ]; then
+			image_build_all
+		else
+			short_name=$1
+			long_name=$(image_expand_name $short_name)
+			image_safe_build_one $long_name $short_name
 		fi
-		image_build $long_name $short_name $base_long_name $base_short_name
 	else
 		error Can only build images locally
 	fi
@@ -1247,12 +1251,12 @@ cmd_image_push() {
 
 cmd_image_delete() {
 	local long_name short_name
-	short_name=$1
-	long_name=$(image_expand_name $short_name)
-	if image_exists $long_name; then
-		image_delete $long_name
+	if [ -z "$1" ]; then
+		image_delete_all
 	else
-		error Image $short_name not found
+		short_name=$1
+		long_name=$(image_expand_name $short_name)
+		image_delete_one $long_name $short_name
 	fi
 }
 
@@ -1301,34 +1305,72 @@ image_exists() {
 	image_list_all | grep -q ^${1}$
 }
 
-image_delete() {
-	server_ssh <<-SSH
-		zfs destroy -r $fs_repo_path/$1
-	SSH
+image_delete_all() {
+	local long_name short_name
+	for long_name in $(image_list); do
+		short_name=$(image_collapse_name $long_name)
+		image_delete_one $long_name $short_name
+	done
 }
 
-image_build() {
+image_delete_one() {
+	local path
+	printf "Deleting image \"$2\" ... "
+	if image_exists $1; then
+		path=$fs_repo_path/$1
+		server_ssh <<-SSH
+			zfs destroy -r $path
+		SSH
+	else
+		error Image $2 not found
+	fi
+	echo DONE!
+}
+
+image_build_all() {
+	local container_long_name image_short_name image_long_name
+	for container_long_name in $(container_list_declared); do
+		image_short_name=$(container_collapse_name $container_long_name)
+		image_long_name=$(image_expand_name $image_short_name)
+		image_safe_build_one $image_long_name $image_short_name
+	done
+}
+
+image_safe_build_one() {
+	local base_var base_short_name base_long_name
+	base_var="$2_base"
+	base_short_name=${!base_var}
+	if [ ! -z $base_short_name ]; then
+		base_long_name=$(image_expand_name $base_short_name)
+		if ! image_exists $base_long_name; then
+			image_safe_build_one $base_long_name $base_short_name
+		fi
+	fi
+	image_build_one $1 $2 $base_long_name $base_short_name
+}
+
+image_build_one() {
 	local short_name long_name suffixed_name container_path \
 	main_process_path build_path requires_name vols_name \
 	requires_value vols_value data_path rc_path bin_path \
 	main_process_bin_path main_process_rc_path fs_old_path \
 	fs_new_path snap_path
+	begin Building image \"$2\"
 	long_name=$1
 	short_name=$2
 	suffixed_name=${long_name}--build
 	if echo $long_name | grep -q ^system-.*; then
 		container_path=$local_lib_path/$short_name
 	else
-		container_path="$app_containers_path/$short_name"
+		container_path=$app_containers_path/$short_name
 	fi
-	main_process_path="$container_path/main_process"
-	build_path="$container_path/build"
-	begin Initializing Jail
+	main_process_path=$container_path/main_process
+	build_path=$container_path/build
 	if container_exists $suffixed_name; then
 		container_delete_one $suffixed_name $short_name
 	fi
 	if image_exists $long_name; then
-		image_delete $long_name
+		image_delete_one $long_name $short_name
 	fi
 	requires_name="${short_name}_requires"
 	vols_name="${short_name}_vols"
@@ -1352,15 +1394,14 @@ image_build() {
 			chmod +x $main_process_bin_path
 		SSH
 	fi
-	begin Executing Build
 	cat <<-SSH | container_ssh $suffixed_name
+		pkg install -y screen
 		$(cat "$build_path")
 	SSH
 	if [ $? != 0 ]; then
 		container_delete_one $suffixed_name $short_name
 		error Build failed
 	else
-		begin Registering Image
 		if [ -f "$main_process_path" ]; then
 			cat <<-SSH | container_ssh $suffixed_name
 				service main_process enable
@@ -1513,11 +1554,13 @@ cmd_container_exec() {
 cmd_container_deploy() {
 	local long_name short_name
 	if [ -z "$1" ]; then
-		container_deploy
+		container_deploy_all
+		cloud_refresh_hosts
 	else
 		short_name=$1
 		long_name=$(container_expand_name $1)
-		container_deploy $long_name $short_name
+		container_safe_deploy_one $long_name $short_name
+		cloud_refresh_hosts
 	fi
 }
 
@@ -1528,47 +1571,54 @@ cmd_container_log() {
 	container_log $long_name
 }
 
+cmd_container_attach() {
+	local long_name short_name
+	short_name=$1
+	long_name=$(container_expand_name $short_name)
+	container_ssh $long_name screen -r main_process
+}
+
 cmd_container_delete() {
 	local long_name short_name
 	if [ -z "$1" ]; then
-		container_delete
+		container_delete_all
 	else
 		short_name=$1
 		long_name=$(container_expand_name $1)
-		container_delete $long_name $short_name
+		container_safe_delete_one $long_name $short_name
 	fi
 }
 
 cmd_container_stop() {
 	local long_name short_name
 	if [ -z "$1" ]; then
-		container_stop
+		container_stop_all
 	else
 		short_name=$1
 		long_name=$(container_expand_name $1)
-		container_stop $long_name $short_name
+		container_safe_stop_one $long_name $short_name
 	fi
 }
 
 cmd_container_start() {
 	local long_name short_name
 	if [ -z "$1" ]; then
-		container_start
+		container_start_all
 	else
 		short_name=$1
 		long_name=$(container_expand_name $1)
-		container_start $long_name $short_name
+		container_safe_start_one $long_name $short_name
 	fi
 }
 
 cmd_container_restart() {
 	local long_name short_name
 	if [ -z "$1" ]; then
-		container_restart
+		container_restart_all
 	else
 		short_name=$1
 		long_name=$(container_expand_name $1)
-		container_restart $long_name $short_name
+		container_restart_one $long_name $short_name
 	fi
 }
 
@@ -1597,7 +1647,7 @@ cmd_container_help() {
 
 container_log() {
 	cat <<-SSH | container_ssh $1
-		tail -f /var/log/main_process.log
+		tail -f /var/log/main_process
 	SSH
 }
 
@@ -1619,14 +1669,6 @@ container_exec() {
 		container_ssh -c $args
 	else
 		container_ssh $args
-	fi
-}
-
-container_deploy() {
-	if [ -z "$1" ]; then
-		container_deploy_all
-	else
-		container_safe_deploy_one $1 $2
 	fi
 }
 
@@ -1657,32 +1699,14 @@ container_safe_deploy_one() {
 }
 
 container_deploy_one() {
-	local image_short_name image_long_name base_var base_short_name base_long_name
+	local image_short_name image_long_name
 	image_short_name=$2
 	image_long_name=$(image_expand_name $2)
-	base_var="$2_base"
-	base_short_name=${!base_var}
-	if [ -z $base_short_name ]; then
-		base_short_name=$image_short_name
-		base_long_name=$image_long_name
-	else
-		base_long_name=$(image_expand_name $base_short_name)
-	fi
 	if [ $cloud_context = local ] && ! image_exists $image_long_name; then
-		begin Building image \"$2\"
-		image_build $image_long_name $2 $base_long_name $base_short_name
+		image_safe_build_one $image_long_name $image_short_name
 	fi
 	begin Deploying container \"$2\"
 	container_create $1 $2 $image_long_name $image_short_name
-	cloud_refresh_hosts
-}
-
-container_delete() {
-	if [ -z "$1" ]; then
-		container_delete_all
-	else
-		container_safe_delete_one $1 $2
-	fi
 }
 
 container_delete_all() {
@@ -1700,21 +1724,24 @@ container_safe_delete_one() {
 }
 
 container_delete_one() {
-	begin "Deleting container \"$2\""
+	local fs_path
 	if container_running $1; then
 		container_stop_one $1 $2
 	fi
 	container_delete_ip $1 $2
+	printf "Deleting container \"$2\" ... "
+	fs_path=$fs_data_path/$1
 	if fs_exists $1; then
 		server_ssh <<-SSH
 			rm $jail_fstab_path/$1
-			umount -f $fs_data_path/$1
-			zfs destroy -r $fs_data_path/$1
+			umount -f $fs_path
+			zfs destroy -r $fs_path
 		SSH
 	fi
 	if [ -z "$(container_list_created)" ]; then
 		rm -f "$app_branch_path"
 	fi
+	echo DONE!
 }
 
 container_delete_ip() {
@@ -1749,14 +1776,6 @@ container_delete_ip() {
 	fi
 }
 
-container_stop() {
-	if [ -z "$1" ]; then
-		container_stop_all
-	else
-		container_safe_stop_one $1 $2
-	fi
-}
-
 container_stop_all() {
 	local long_name short_name
 	for long_name in $(container_list_created); do
@@ -1779,14 +1798,6 @@ container_stop_one() {
 	printf "Stopping container \"$2\" ... "
 	container_service stop $1
 	echo DONE!
-}
-
-container_start() {
-	if [ -z "$1" ]; then
-		container_start_all
-	else
-		container_safe_start_one $1 $2
-	fi
 }
 
 container_start_requires() {
@@ -1820,14 +1831,6 @@ container_start_one() {
 	printf "Starting container \"$2\" ... "
 	container_service start $1
 	echo DONE!
-}
-
-container_restart() {
-	if [ -z "$1" ]; then
-		container_restart_all
-	else
-		container_restart_one $1 $2
-	fi
 }
 
 container_restart_all() {
@@ -2055,14 +2058,14 @@ container_gen_fstab() {
 				server_ssh <<-SSH
 					zfs create -p $shared_fs
 					if [ -d $vol_path ] && [ ! -z "\$(ls $vol_path)" ]; then
-						mv $vol_path/* $shared_path
+						mv $vol_path/* "$shared_path"
 					fi
 				SSH
 			fi
 			server_ssh <<-SSH
 				if [ -d "$shared_path" ]; then
 					mkdir -p $vol_path
-					echo "$shared_path" $vol_path nullfs rw 0 0 >> $fstab_path
+					echo $(echo "$shared_path" | sed 's/ /\\\\040/g') $vol_path nullfs rw 0 0 >> $fstab_path
 				fi
 			SSH
 		done
@@ -2306,6 +2309,27 @@ cmd_server_exec() {
 	server_ssh $@
 }
 
+cmd_server_expand() {
+	if [ $cloud_context = local ]; then
+		if xhyve_running; then
+			begin Stopping server
+			xhyve_stop
+		fi
+		begin Expanding disk
+		dd if=/dev/zero bs=1g count=20 >> $local_disk_path
+		begin Starting server
+		xhyve_start
+		begin Expanding filesystem
+		server_ssh <<-SSH
+			gpart recover vtbd0
+			gpart resize -i 2 vtbd0
+			zpool online -e zroot vtbd0p2
+		SSH
+	else
+		error Not implemented yet
+	fi
+}
+
 cmd_server_update() {
 	xhyve_ensure
 	server_update
@@ -2547,9 +2571,11 @@ server_reset_session() {
 }
 
 server_reload_ingress() {
+	printf "Reloading ingress ... "
 	cat <<-SSH | container_ssh system-ingress
-		main_process reload
+		main_process reload >/dev/null 2>&1
 	SSH
+	echo DONE!
 }
 
 server_ingress_init() {
@@ -2776,6 +2802,9 @@ branch|volume|tunnel|ingress|image|context|container|server)
 			log)
 				cmd_container_log $@
 			;;
+			attach)
+				cmd_container_attach $@
+			;;
 			exec)
 				cmd_container_exec $@
 			;;
@@ -2826,6 +2855,9 @@ branch|volume|tunnel|ingress|image|context|container|server)
 		shell)
 			cmd_server_shell
 		;;
+		expand)
+			cmd_server_expand
+		;;
 		exec)
 			cmd_server_exec $@
 		;;
@@ -2862,6 +2894,9 @@ branch|volume|tunnel|ingress|image|context|container|server)
 		;;
 		push)
 			cmd_ingress_push
+		;;
+		export)
+			cmd_ingress_export
 		;;
 		deploy)
 			cmd_ingress_deploy
