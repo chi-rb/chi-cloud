@@ -1,10 +1,58 @@
 # Cloud
 
-Provides a simple orchestration of a Ruby on Rails deployment on macOS within a localised containerized environment utilising a XHYVE hypervisor.
+Provides a simple orchestration of a Ruby on Rails deployment on macOS.
 
 ## Why?
 
-I want to provide a standarized way to manage infrastructure, to enable development teams to work on a consistent platform, whilst lowering the entry bar to build containerized apps.
+I want to have a standarized simple way to manage infrastructure for Ruby on Rails apps.
+
+## How to install?
+
+Run this in your terminal:
+
+```
+sh <(curl -s https://raw.githubusercontent.com/chi-rb/chi-cloud/master/bin/cloud) install
+```
+
+## How to deploy locally?
+
+** All commands are designed to be executed from the root folder of the project.
+
+### 1. Deploy Containers
+
+```
+cloud container deploy
+```
+
+### 2. Check if Rails ready
+
+```
+cloud container log rails
+```
+
+### 3. Open App
+
+```
+cloud open
+```
+
+## How to use ByeBug?
+
+You need to attach your terminal to the screen session of the main process of the Rails container.
+
+** Since is a screen session, to don't exit and don't kill the process you need to press Ctrl+A D
+
+```
+cloud container attach rails
+```
+
+## How to start a Tunnel?
+
+Pass the name of the container and port to the "tunnel" cmd:
+
+```
+cloud tunnel start mysql 3306
+```
 
 ## Credits
 
