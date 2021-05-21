@@ -769,8 +769,8 @@ cloud_boot() {
 	local context_path
 	if [ $cloud_context != local ]; then
 		context_path=$PWD/cloud/contexts/$cloud_context
-		if [ -f $context_path ]; then
-			cloud_read_ini $context_path
+		if [ -f "$context_path" ]; then
+			cloud_read_ini "$context_path"
 		else
 			error Context not found
 		fi
