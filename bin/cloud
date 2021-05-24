@@ -1244,9 +1244,13 @@ cmd_image_build() {
 
 cmd_image_push() {
 	local short_name long_name
-	short_name=$1
-	long_name=$(image_expand_name $short_name)
-	image_push $long_name $short_name
+	if [ -z "$1" ]; then
+		image_push_all
+	else
+		short_name=$1
+		long_name=$(image_expand_name $short_name)
+		image_safe_push_one $long_name $short_name
+	fi
 }
 
 cmd_image_delete() {
@@ -1315,16 +1319,16 @@ image_delete_all() {
 
 image_delete_one() {
 	local path
-	printf "Deleting image \"$2\" ... "
 	if image_exists $1; then
+		printf "Deleting image \"$2\" ... "
 		path=$fs_repo_path/$1
 		server_ssh <<-SSH
 			zfs destroy -r $path
 		SSH
+		echo DONE!
 	else
 		error Image $2 not found
 	fi
-	echo DONE!
 }
 
 image_build_all() {
@@ -1426,22 +1430,38 @@ image_build_one() {
 	export "$vols_name=$vols_value"
 }
 
-image_push() {
+image_push_all() {
+	local container_long_name image_short_name image_long_name
+	for container_long_name in $(container_list_declared); do
+		image_short_name=$(container_collapse_name $container_long_name)
+		image_long_name=$(image_expand_name $image_short_name)
+		if image_exists $image_long_name; then
+			image_push_one $image_long_name $image_short_name
+		fi
+	done
+}
+
+image_safe_push_one() {
+	if image_exists $1; then
+		image_push_one $@
+	else
+		error Image not found $2
+	fi
+}
+
+image_push_one() {
 	local tar_name tar_path zfs_path fs_path
 	tar_name=$1.tar.gz
 	tar_path=$local_transfers_path/$tar_name
 	zfs_path=$local_transfers_path/$1
 	if [ $cloud_context != local ]; then
-		begin Compressing Image
+		begin Pushing image \"$2\"
 		image_export $1
-		begin Transferring Image
 		server_ssh <<-SSH
-			if [ -f $tar_path ]; then
-				rm $tar_path
-			fi
+			mkdir -p $local_transfers_path
+			rm -f $tar_path
 		SSH
 		fast_scp $tar_path $server_user@$server_ip:$tar_path
-		begin Registering Image
 		if [ $cloud_context != registry ]; then
 			fs_path=$fs_repo_path/$1
 			server_ssh <<-SSH
@@ -1478,9 +1498,8 @@ image_export() {
 	zfs_path=$local_transfers_path/$1
 	tar_path=$zfs_path.tar.gz
 	cat <<-SSH | server_ssh -l
-		if [ -f $tar_path ]; then
-			rm $tar_path
-		fi
+		mkdir -p $local_transfers_path
+		rm -f $tar_path
 		zfs send $fs_repo_path/$1@last > $zfs_path
 		tar -C $local_transfers_path -czvf $tar_path $1
 		rm $zfs_path
@@ -1900,6 +1919,9 @@ container_create() {
 			error Image $4 not found
 		fi
 	fi
+	server_ssh <<-SSH
+		zfs destroy $new_path@last
+	SSH
 	container_config $1 $2
 	server_ssh <<-SSH
 		jail -c $1
@@ -2215,19 +2237,20 @@ cmd_server_install() {
 	if [ $cloud_context = local ]; then
 		begin Dowloading Server
 		server_download
-	fi
-	begin Configuring Server
-	server_config
-	if [ $cloud_context = local ]; then
+		begin Configuring Server
+		server_config
 		begin Creating Disk
 		server_create_disk
 		begin First Start
 		server_first_start
 		begin Sharing Directories
 		server_share_dirs
-	else
-		begin Creating Dirs
-		server_ensure_dirs
+	fi
+	if [ $cloud_context != local ]; then
+		begin Setting Preferences
+		server_set_prefs
+		begin Initializing Jails
+		server_jail_init
 	fi
 	begin Downloading Ingress
 	server_ingress_init
@@ -2235,13 +2258,6 @@ cmd_server_install() {
 		begin Installing Certificates
 		mac_trust_cert
 	fi
-}
-
-cmd_server_init() {
-	begin Setting Preferences 
-	server_set_prefs
-	begin Initializing Jails
-	server_jail_init
 }
 
 cmd_server_uninstall() {
@@ -2380,15 +2396,13 @@ server_create_disk() {
 	fi
 }
 
-server_ensure_dirs() {
-	server_ssh <<-SSH
-		mkdir -p $local_transfers_path
-	SSH
-}
-
 server_share_dirs() {
 	local rel_path abs_path
 	if ! mac_exports_exists; then
+		if [ ! -f $exports_path ]; then
+			sudo touch $exports_path
+			chown root:wheel $exports_path
+		fi
 		for rel_path in $exports_paths; do
 			abs_path=$exports_data_path$rel_path
 			mac_add_line -s $exports_path "$abs_path -mapall=$(id -u)"
@@ -2421,15 +2435,11 @@ server_config() {
 server_set_prefs() {
 	server_ssh <<-SSH
 		chsh -s /bin/sh
-		zfs destroy -R $fs_skel_path@last
-		zfs snapshot $fs_skel_path@last
 	SSH
 	server_reset_session
 	server_ssh <<-SSH
 		touch /root/.hushlogin
-		cat <<-CONF > /etc/profile
-			$ps1
-		CONF
+		echo '$ps1' > /etc/profile
 	SSH
 }
 
@@ -2558,16 +2568,14 @@ server_jail_init() {
 		zfs snapshot $fs_skel_path@last
 		service netif start lo1
 		service pf start
+
+		mkdir -p $local_transfers_path
 	SSH
 	server_reset_session
 }
 
 server_reset_session() {
-	local path
-	path=/tmp/$server_user@$server_ip
-	if [ -f $path ]; then
-		rm $path
-	fi
+	rm -f /tmp/$server_user@$server_ip
 }
 
 server_reload_ingress() {
@@ -2607,7 +2615,7 @@ server_first_start() {
 			printf .
 			sleep $wait_count
       if ! xhyve_running; then
-        error Xhyve process failed check ~/.cloud/log
+        error Xhyve process failed check $local_log_path
       fi
 		done
 		. $local_ips_path
