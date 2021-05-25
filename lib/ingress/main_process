@@ -1,8 +1,10 @@
 #!/bin/sh
 
-nginx_path=/usr/local/etc/nginx
-proxy_path=$nginx_path/proxy.conf
-ingress_path=$nginx_path/ingress.conf
+local_path=/usr/local
+bin_path=$local_path/sbin/nginx
+etc_path=$local_path/etc/nginx
+proxy_path=$etc_path/proxy.conf
+ingress_path=$etc_path/ingress.conf
 ssl_path=/ssl
 
 build_name() {
@@ -43,7 +45,10 @@ cert_valid() {
 }
 
 case $1 in
-start)
+reload)
+	$bin_path -s reload
+;;
+*)
 	if [ $CLOUD_CONTEXT = local ]; then
 		naked_domain=$SERVER_DOMAIN
 		server_name="~^(?<app>.+)\-(?<env>.+)\.$naked_domain$"
@@ -180,9 +185,6 @@ start)
 		fi
 	fi
 
-	service nginx onestart
-;;
-reload)
-	service nginx onereload
+	$bin_path -g 'daemon off;'
 ;;
 esac

@@ -1,6 +1,6 @@
 #!/bin/sh
 
-nginx_path=/usr/local/etc/nginx
+etc_path=/usr/local/etc/nginx
 
 pkg install -y \
 nginx \
@@ -9,6 +9,6 @@ py37-certbot-nginx \
 py37-certbot-dns-cloudflare
 
 for target in proxy.conf nginx.conf hosts.map; do
-	cp /mnt/lib/ingress/$target $nginx_path
+	cp /mnt/lib/ingress/$target $etc_path
 done
-touch $nginx_path/hosts
+touch $etc_path/hosts
