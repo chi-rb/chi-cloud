@@ -86,6 +86,18 @@ You can list all containers of the app with their status using:
 cloud container
 ```
 
+## How to encrypt/decrypt?
+
+To protect a secret inside environments you can:
+```
+CLOUD_KEY=secret cloud encrypt "value"
+```
+
+To get back original value from the ENC(...) string:
+```
+CLOUD_KEY=secret cloud decrypt "ENC(...)"
+```
+
 ## How to Start/Stop/Restart?
 
 To control the status of the server:
