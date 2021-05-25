@@ -1545,7 +1545,7 @@ cmd_container_list() {
 	local list long_name short_name status
 	for long_name in $(container_list_created); do
 		short_name=$(container_collapse_name $long_name)
-		if container_running $short_name; then
+		if container_running $long_name; then
 			status=RUNNING
 		else
 			status=STOPPED
