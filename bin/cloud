@@ -1180,7 +1180,7 @@ cmd_ingress_build() {
 }
 
 cmd_ingress_push() {
-	image_push system-ingress ingress
+	image_push_one system-ingress ingress
 }
 
 cmd_ingress_export() {
