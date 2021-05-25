@@ -86,7 +86,7 @@ You can list all containers of the app with their status using:
 cloud container
 ```
 
-## How to encrypt/decrypt?
+## How to Encrypt/Decrypt?
 
 To protect a secret inside environments you can:
 ```
