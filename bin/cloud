@@ -79,6 +79,7 @@ ingress_vols='ssl:/ssl nginx:/usr/local/etc/nginx'
 
 server_local_user=root
 server_local_ip_range=10
+server_local_ext_if=vtnet0
 server_local_domain=$name.local
 server_local_mem=4G
 server_local_cpus=4
@@ -751,6 +752,7 @@ cloud_config() {
 	if [ $cloud_context = local ]; then
 		server_user=$server_local_user
 		server_ip_range=$server_local_ip_range
+		server_ext_if=$server_local_ext_if
 		server_domain=$server_local_domain
 		server_ip=$server_local_ip
 		server_mem=$server_local_mem
@@ -1137,7 +1139,7 @@ cmd_tunnel_start() {
 	short_name=$1
 	long_name=$(container_expand_name $short_name)
 	server_ssh <<-SSH
-		echo "rdr on vtnet0 proto tcp from any to (vtnet0) port $2 -> $long_name port $2" |
+		echo "rdr on $server_ext_if proto tcp from any to ($server_ext_if) port $2 -> $long_name port $2" |
 		pfctl -a tunnels -f -
 	SSH
 	echo "$server_domain:$2 => $short_name:$2"
@@ -2472,12 +2474,6 @@ server_update() {
 }
 
 server_jail_init() {
-	local ext_if host
-	if [ $cloud_context = local ]; then
-		ext_if=vtnet0
-	else
-		ext_if=$server_ext_if
-	fi
 	server_ssh <<-SSH
 		for fs in $fs_jail_path $fs_base_path $fs_skel_path $fs_data_path $fs_fstab_path $fs_repo_path $fs_shared_path; do
 			zfs create \$fs
