@@ -47,6 +47,7 @@ local_xhyve_path=$local_hv_path/xhyve
 local_userboot_path=$local_hv_path/userboot.so
 local_tmp_path=$local_path/tmp
 local_transfers_path=$local_tmp_path/transfers
+local_hv_xz_path=$local_tmp_path/hv.tar.xz
 local_disk_xz_path=$local_tmp_path/disk.img.xz
 local_ingress_tar_path=$local_tmp_path/system-ingress.tar.gz
 local_ingress_zfs_path=$local_tmp_path/system-ingress
@@ -446,6 +447,14 @@ mac_authorize_xhyve() {
 	fi
 }
 
+mac_authorize_qemu() {
+	if ! mac_bin_authorized $local_qemu_path; then
+		mac_authorize_bin $local_qemu_path
+	else
+		echo Already authorized
+	fi
+}
+
 mac_trust_cert() {
 	while ! $(server_ssh test -f $ingress_cert_path); do
 		printf .
@@ -615,10 +624,6 @@ cmd_cloud_install() {
 	mac_authorize_terminal
 	begin Authorizing NFSD
 	mac_authorize_nfsd
-	if [ $arch != arm64 ]; then
-		begin Authorizing XHYVE
-		mac_authorize_xhyve
-	fi
 }
 
 cmd_cloud_uninstall() {
@@ -861,17 +866,20 @@ cloud_add_bins() {
 }
 
 cloud_delete_bins() {
-	local path bin_name
+	local path bin_name found
 	if [ -d $local_path ]; then
 		for bin_name in $(cloud_get_bin_names); do
 			path=$bin_path/$bin_name
-			if [ $branch != master ]; then
-				path+=-$branch
-			fi
 			if [ -f $path ]; then
 				rm -v $path
+				found=true
+			fi
+			if [ $found != true ]; then
+				echo Already deleted
 			fi
 		done
+	else
+		echo Already deleted
 	fi
 }
 
@@ -2303,6 +2311,14 @@ cmd_server_install() {
 		server_download
 		begin Configuring Server
 		server_config
+		begin Installing Hypervisor
+		server_install_hv
+		begin Authorize Hypervisor
+		if [ $arch = arm64 ]; then
+			mac_authorize_qemu
+		else
+			mac_authorize_xhyve
+		fi
 		begin Creating Disk
 		server_create_disk
 		begin First Start
@@ -2329,7 +2345,7 @@ cmd_server_uninstall() {
 		begin Unsharing Directories
 		server_unshare_dirs
 		begin Stopping Server
-		hv_stop
+		hv_safe_stop
 		begin Deleting Files
 		server_delete_files
 		begin Deleting Hostname
@@ -2435,6 +2451,15 @@ cmd_server_help() {
 	DOC
 }
 
+server_install_hv() {
+	if [ ! -d $local_hv_path ]; then
+		echo $local_hv_xz_path
+		tar xJf $local_hv_xz_path -C $local_server_path
+	else
+		echo Hypervisor already installed
+	fi
+}
+
 server_disable_send_ips() {
 	server_ssh <<-SSH
 		sed -i '' '/send-ips/d' /etc/rc.local
@@ -2442,9 +2467,9 @@ server_disable_send_ips() {
 }
 
 server_download() {
-	if [ ! -f $local_userboot_path ] || [ ! -f $local_disk_path ]; then
-		if [ ! -f $local_userboot_path ]; then
-			curl -o $local_userboot_path $s3_userboot_url
+	if [ ! -f $local_hv_xz_path ] || [ ! -f $local_disk_xz_path ]; then
+		if [ ! -f $local_hv_xz_path ]; then
+			curl -o $local_hv_xz_path $s3_hv_url
 		fi
 		if [ ! -f $local_disk_xz_path ]; then
 			curl -o $local_disk_xz_path $s3_disk_url
@@ -2457,7 +2482,6 @@ server_download() {
 server_create_disk() {
 	if [ ! -f $local_disk_path ]; then
 		tar xJvf $local_disk_xz_path -C $local_server_path
-		rm $local_disk_xz_path
 	else
 		echo Disk already created
 	fi
@@ -2708,13 +2732,26 @@ server_ingress_init() {
 }
 
 server_delete_files() {
-	rm -rvf $local_tmp_path/*
-	rm -rvf $local_server_path/*
+	if [ -d $local_tmp_path ] || [ -d $local_server_path ]; then
+		if [ -d $local_tmp_path ]; then
+			echo $local_tmp_path
+			rm -rf $local_tmp_path
+		fi
+		if [ -d $local_server_path ]; then
+			echo $local_server_path
+			rm -rf $local_server_path
+		fi
+	else
+		echo Already deleted
+	fi
 }
 
 server_delete_host() {
-	echo $server_domain
-	mac_delete_line -s $hosts_path $server_domain
+	if cat $hosts_path | grep $server_domain; then
+		mac_delete_line -s $hosts_path $server_domain
+	else
+		echo Already deleted
+	fi
 }
 
 server_unshare_dirs() {
