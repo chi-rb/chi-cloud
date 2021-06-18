@@ -5,11 +5,12 @@
 name=cloud
 pid=$$
 mac_ver=$(sw_vers -productVersion | cut -d . -f 1)
+arch=$(uname -m)
 branch=master
+freebsd_url="ftp://ftp.tw.freebsd.org/pub/FreeBSD/releases/\$(uname -m)/\$(uname -p)/\$(uname -r | cut -d - -f 1-2)"
 bin_path=/usr/local/bin
 xhyve_path=$bin_path/xhyve
 wait_count=15
-freebsd_url="ftp://ftp.tw.freebsd.org/pub/FreeBSD/releases/amd64/\$(uname -r | cut -d - -f 1-2)/"
 github_url=git@github.com:chi-rb/chi-cloud.git
 hosts_path=/etc/hosts
 nfsd_path=/sbin/nfsd
@@ -25,30 +26,36 @@ exports_home_path=$HOME
 exports_cloud_path=/usr/local/cloud
 exports_paths="$exports_home_path $exports_cloud_path"
 
-s3_url=https://chi-rb.s3.amazonaws.com
-if [ $branch = dev ]; then
-	s3_url+=/dev
-fi
+s3_url=https://chi-rb.s3.amazonaws.com/$arch
 s3_ingress_url=$s3_url/system-ingress.tar.gz
-s3_userboot_url=$s3_url/userboot.so
+s3_hv_url=$s3_url/hv.tar.xz
 s3_disk_url=$s3_url/disk.img.xz
 
 local_path=/usr/local/$name
 local_bin_path=$local_path/bin
-local_xhyve_path=$local_bin_path/xhyve
+local_server_path=$local_path/server
+local_hv_path=$local_server_path/hv
+local_src_path=$local_hv_path/src
+local_bootloader_path=$local_hv_path/pflash0.img
+local_ramdisk_path=$local_hv_path/pflash1.img
+local_build_path=$local_hv_path/build
+local_qemu_path=$local_build_path/qemu-system-aarch64
+local_deps_path=$local_hv_path/deps
+local_deps_bin_path=$local_deps_path/bin
+local_deps_sbin_path=$local_deps_path/sbin
+local_xhyve_path=$local_hv_path/xhyve
+local_userboot_path=$local_hv_path/userboot.so
 local_tmp_path=$local_path/tmp
 local_transfers_path=$local_tmp_path/transfers
 local_disk_xz_path=$local_tmp_path/disk.img.xz
 local_ingress_tar_path=$local_tmp_path/system-ingress.tar.gz
 local_ingress_zfs_path=$local_tmp_path/system-ingress
 local_ips_path=$local_tmp_path/ips
-local_run_path=$local_path/run
-local_log_path=$local_run_path/log
-local_userboot_path=$local_run_path/userboot.so
-local_pid_path=$local_run_path/pid
-local_disk_path=$local_run_path/disk.img
-local_conf_path=$local_run_path/conf
-local_cert_path=$local_run_path/cert.pem
+local_log_path=$local_server_path/log
+local_pid_path=$local_server_path/pid
+local_disk_path=$local_server_path/disk.img
+local_conf_path=$local_server_path/conf
+local_cert_path=$local_server_path/cert.pem
 local_lib_path=$local_path/lib
 local_ingress_path=$local_lib_path/ingress
 
@@ -78,16 +85,18 @@ ingress_hosts_path=$ingress_nginx_path/hosts
 ingress_vols='ssl:/ssl nginx:/usr/local/etc/nginx'
 
 server_local_user=root
-server_local_ip_range=10
+server_local_ip_range=11
+server_local_ext_if=vtnet0
 server_local_domain=$name.local
 server_local_mem=4G
 server_local_cpus=4
 server_local_id=8299FDAA-4CC0-4FF2-AE5B-A1E1DEC574D7
 
-net_setting_names=(
-	mac_ip
-	server_local_ip
-)
+if [ $arch = arm64 ]; then
+	server_local_ip=127.0.0.1
+	mac_ip=10.0.2.2
+fi
+
 user_setting_names=(
 	server_local_mem
 	server_local_cpus
@@ -152,7 +161,7 @@ dashify() {
 }
 
 fast_ssh_opts() {
-	local opts path
+	local opts
 	opts=$(cat <<-SH
 	-o ConnectTimeout=10
 	-o ControlMaster=auto
@@ -170,18 +179,27 @@ fast_ssh_opts() {
 }
 
 fast_ssh() {
-	local user host
+	local user host opts
 	user=$1
 	host=$2
 	shift 2
+	opts=$(fast_ssh_opts)
+	if [ $arch = arm64 ]; then
+		opts+=' -p 2200'
+	fi
 	ssh -tq \
-	$(fast_ssh_opts) \
+	$opts \
 	$user@$host $@
 }
 
 fast_scp() {
+	local opts
+	opts=$(fast_ssh_opts)
+	if [ $arch = arm64 ]; then
+		opts+=' -P 2200'
+	fi
 	scp \
-	$(fast_ssh_opts) \
+	$opts \
 	-C \
 	$@
 }
@@ -217,6 +235,10 @@ fs_read_size() {
 }
 
 # MAC
+
+mac_host_exists() {
+	sudo grep -q $server_domain $hosts_path
+}
 
 mac_ensure_ver() {
 	if [ $mac_ver -lt 10 ] || [ $mac_ver -gt 11 ]; then
@@ -332,10 +354,6 @@ mac_delete_line() {
 	fi
 }
 
-mac_host_exists() {
-	sudo grep -q $server_domain $hosts_path
-}
-
 mac_exports_exists() {
 	test -f $exports_path && \
 	sudo egrep -q "$exports_home_path|$exports_cloud_path" $exports_path
@@ -441,95 +459,112 @@ mac_trust_cert() {
 	$local_cert_path
 }
 
-# XHYVE
+# HV 
 
-xhyve_ensure() {
-	if ! xhyve_running; then
-		xhyve_start
+hv_ensure() {
+	if ! hv_running; then
+		hv_start
 	fi
 }
 
-xhyve_spawn() {
-	sudo nohup xhyve \
-	-U $server_id \
-	-A \
-	-c $server_cpus \
-	-m $server_mem \
-	-s 0,hostbridge \
-	-s 2,virtio-net \
-	-s 4,virtio-blk,$local_disk_path \
-	-f "fbsd,$local_userboot_path,$local_disk_path," \
-	&>$local_log_path &
-	echo $! > $local_pid_path
+hv_spawn() {
+	if [ $arch = arm64 ]; then
+		sudo nohup $local_qemu_path \
+		-machine virt,accel=hvf,highmem=off \
+		-cpu cortex-a72 -smp $server_cpus -m $server_mem \
+		-device virtio-gpu-pci \
+		-device virtio-keyboard-pci \
+		-device qemu-xhci \
+		-drive file=$local_disk_path,format=raw,if=virtio,cache=writethrough \
+		-drive file=$local_bootloader_path,format=raw,if=pflash,readonly=on \
+		-drive file=$local_ramdisk_path,format=raw,if=pflash \
+		-nic user,model=virtio,hostfwd=tcp::2200-:22,hostfwd=tcp::80-:80,hostfwd=tcp::443-:443 \
+		-display default,show-cursor=on \
+		-nographic \
+		-serial mon:stdio \
+		-pidfile $local_pid_path \
+		&>$local_log_path &
+	else
+		sudo nohup $local_xhyve_path \
+		-U $server_id \
+		-A \
+		-c $server_cpus \
+		-m $server_mem \
+		-s 0,hostbridge \
+		-s 2,virtio-net \
+		-s 4,virtio-blk,$local_disk_path \
+		-f "fbsd,$local_userboot_path,$local_disk_path," \
+		&>$local_log_path &
+		echo $! > $local_pid_path
+	fi
 }
 
-xhyve_booting() {
+hv_booting() {
 	! $(server_ssh pwd >/dev/null 2>&1)
 }
 
-xhyve_wait_boot() {
-	while xhyve_booting; do
+hv_wait_boot() {
+	while hv_booting; do
 		printf .
 		sleep $wait_count
 	done
-	echo
 }
 
-xhyve_start() {
-	xhyve_spawn
-	xhyve_wait_boot "$@"
+hv_start() {
+	printf 'Starting server '
+	hv_spawn
+	hv_wait_boot "$@"
+	sudo chown $USER:admin $local_pid_path
+	echo ' DONE!'
 }
 
-xhyve_safe_start() {
-	if ! xhyve_running; then
-		xhyve_start
+hv_safe_start() {
+	if ! hv_running; then
+		hv_start
 	else
 		echo Already running
 	fi
 }
 
-xhyve_pid() {
-	local pid
-	pid=$(cat $local_pid_path)
-	pgrep -P $pid
+hv_stop() {
+	printf 'Stopping server '
+	server_ssh poweroff >/dev/null
+	hv_wait_pid "$@"
+	rm -f $local_pid_path
+	echo ' DONE!'
 }
 
-xhyve_stop() {
-	server_ssh poweroff
-	xhyve_wait_pid "$@"
-	rm $local_pid_path
-}
-
-xhyve_safe_stop() {
-	if xhyve_running; then
-		xhyve_stop
+hv_safe_stop() {
+	if hv_running; then
+		hv_stop
 	else
 		echo Not running
 	fi
 }
 
-xhyve_safe_restart() {
-	xhyve_safe_stop
-	xhyve_safe_start
+hv_safe_restart() {
+	if hv_running; then
+		hv_stop
+	fi
+	hv_start
 }
 
-xhyve_wait_pid() {
-	while xhyve_running; do
+hv_wait_pid() {
+	while hv_running; do
 		printf .
 		sleep $wait_count
 	done
-	echo
 }
 
-xhyve_running() {
+hv_running() {
 	if [ -f $local_pid_path ]; then
-		ps -p $(xhyve_pid) >/dev/null 2>&1
+		pgrep -F $local_pid_path >/dev/null 2>&1
 	else
 		return 1
 	fi
 }
 
-# CLOUD 
+# CLOUD
 
 cmd_cloud_open() {
 	local url
@@ -580,8 +615,10 @@ cmd_cloud_install() {
 	mac_authorize_terminal
 	begin Authorizing NFSD
 	mac_authorize_nfsd
-	begin Authorizing XHYVE
-	mac_authorize_xhyve
+	if [ $arch != arm64 ]; then
+		begin Authorizing XHYVE
+		mac_authorize_xhyve
+	fi
 }
 
 cmd_cloud_uninstall() {
@@ -695,7 +732,7 @@ cloud_clone() {
 		sudo mkdir -p $local_path
 		sudo chown $USER:admin $local_path
 		git clone $github_url --single-branch --branch $branch $local_path
-		mkdir -p $local_run_path
+		mkdir -p $local_server_path
 		mkdir -p $local_transfers_path
 		if [ $? != 0 ]; then
 			error "Can't clone repo"
@@ -751,6 +788,7 @@ cloud_config() {
 	if [ $cloud_context = local ]; then
 		server_user=$server_local_user
 		server_ip_range=$server_local_ip_range
+		server_ext_if=$server_local_ext_if
 		server_domain=$server_local_domain
 		server_ip=$server_local_ip
 		server_mem=$server_local_mem
@@ -802,14 +840,22 @@ cloud_get_bin_names() {
 
 cloud_add_bins() {
 	local path bin_name
+	if [ ! -d $bin_path ]; then
+		sudo mkdir -p $bin_path
+		sudo chown $USER:admin $bin_path
+	fi
 	for bin_name in $(cloud_get_bin_names); do
-		path=$bin_path/$bin_name
-		if [ $branch != master ]; then
-			path+=-$branch
-		fi
-		if [ ! -f $path ]; then
-			ln -s $local_bin_path/$bin_name $path
-			echo $path
+		if [ bin_name = xhyve ] && [ $arch = arm64 ]; then
+			continue
+		else
+			path=$bin_path/$bin_name
+			if [ $branch != master ]; then
+				path+=-$branch
+			fi
+			if [ ! -f $path ]; then
+				ln -s $local_bin_path/$bin_name $path
+				echo $path
+			fi
 		fi
 	done
 }
@@ -877,7 +923,7 @@ cloud_read_ini() {
 # APP
 
 app_load() {
-	xhyve_ensure
+	hv_ensure
 	app_config
 	app_ensure_cloud
 	app_ensure_env
@@ -1137,7 +1183,7 @@ cmd_tunnel_start() {
 	short_name=$1
 	long_name=$(container_expand_name $short_name)
 	server_ssh <<-SSH
-		echo "rdr on vtnet0 proto tcp from any to (vtnet0) port $2 -> $long_name port $2" |
+		echo "rdr on $server_ext_if proto tcp from any to ($server_ext_if) port $2 -> $long_name port $2" |
 		pfctl -a tunnels -f -
 	SSH
 	echo "$server_domain:$2 => $short_name:$2"
@@ -1229,16 +1275,12 @@ cmd_image_list() {
 
 cmd_image_build() {
 	local short_name long_name
-	if [ $cloud_context = local ]; then
-		if [ -z "$1" ]; then
-			image_build_all
-		else
-			short_name=$1
-			long_name=$(image_expand_name $short_name)
-			image_safe_build_one $long_name $short_name
-		fi
+	if [ -z "$1" ]; then
+		image_build_all
 	else
-		error Can only build images locally
+		short_name=$1
+		long_name=$(image_expand_name $short_name)
+		image_safe_build_one $long_name $short_name
 	fi
 }
 
@@ -1354,11 +1396,11 @@ image_safe_build_one() {
 }
 
 image_build_one() {
-	local short_name long_name suffixed_name container_path \
-	main_process_path build_path requires_name vols_name \
+	local short_name long_name suffixed_name containers_path \
+	containers_path main_process_path requires_name vols_name \
 	requires_value vols_value data_path rc_path bin_path \
 	main_process_bin_path main_process_rc_path fs_old_path \
-	fs_new_path snap_path
+	fs_new_path snap_path build_path
 	begin Building image \"$2\"
 	long_name=$1
 	short_name=$2
@@ -1369,7 +1411,6 @@ image_build_one() {
 		container_path=$app_containers_path/$short_name
 	fi
 	main_process_path=$container_path/main_process
-	build_path=$container_path/build
 	if container_exists $suffixed_name; then
 		container_delete_one $suffixed_name $short_name
 	fi
@@ -1389,18 +1430,30 @@ image_build_one() {
 		main_process_rc_path=$rc_path/main_process
 		bin_path=$data_path/usr/local/bin
 		main_process_bin_path=$bin_path/main_process
+		if [ $cloud_context = local ]; then
+			remote_main_process_path=$main_process_path
+		else
+			remote_main_process_path=/tmp/rails/cloud/containers/$short_name/main_process
+		fi
 		server_ssh <<-SSH
 			mkdir -p $rc_path
 			mkdir -p $bin_path
 			cp $local_lib_path/rc.d/main_process $main_process_rc_path
-			cp "$main_process_path" $main_process_bin_path
+			cp "$remote_main_process_path" $main_process_bin_path
 			chmod +x $main_process_rc_path
 			chmod +x $main_process_bin_path
 		SSH
 	fi
 	cat <<-SSH | container_ssh $suffixed_name
 		pkg install -y screen
-		$(cat "$build_path")
+	SSH
+	if echo $long_name | grep -q ^system-.*; then
+		build_path=/mnt/lib/$short_name/build
+	else
+		build_path=/mnt/cloud/containers/$short_name/build
+	fi
+	cat <<-SSH | container_ssh $suffixed_name
+		$build_path
 	SSH
 	if [ $? != 0 ]; then
 		container_delete_one $suffixed_name $short_name
@@ -1559,13 +1612,13 @@ cmd_container_exec() {
 	short_name=$1
 	long_name=$(container_expand_name $short_name)
 	if [ -t 0 ]; then
-		if [ $# -gt 2 ] && [ "$3" = -- ]; then
-			shift 3
+		if [ $# -gt 2 ] && [ "$2" = -- ]; then
+			shift 2
 		else
 			error Wrong format
 		fi
 	else
-		shift 2
+		shift 1
 	fi
 	container_exec -c $long_name $@
 }
@@ -1927,8 +1980,11 @@ container_create() {
 		jail -c $1
 	SSH
 	if [ "$build" = true ] && [ -z "$3" ]; then
-		server_ssh <<-SSH
-			jexec $1 chsh -s /bin/sh
+		container_ssh $1 chsh -s /bin/sh
+		cat <<-SSH | container_ssh $1
+			if [ -f /root/.shrc ]; then
+				sed -i '' 's/PS1/# PS1/' /root/.shrc
+			fi
 		SSH
 	fi
 }
@@ -2060,11 +2116,19 @@ container_gen_fstab() {
 			*)
 				case $vol_name in
 				rails)
-					shared_path=$app_path
+					if [ $cloud_context = local ]; then
+						shared_path=$app_path
+					else
+						shared_path=/tmp/rails
+					fi
 					vol_path=$data_path/rails
 				;;
 				mnt)
-					shared_path=$app_path
+					if [ $cloud_context = local ]; then
+						shared_path=$app_path
+					else
+						shared_path=/tmp/rails
+					fi
 					vol_path=$data_path/mnt
 				;;
 				*)
@@ -2265,7 +2329,7 @@ cmd_server_uninstall() {
 		begin Unsharing Directories
 		server_unshare_dirs
 		begin Stopping Server
-		xhyve_stop
+		hv_stop
 		begin Deleting Files
 		server_delete_files
 		begin Deleting Hostname
@@ -2286,7 +2350,7 @@ cmd_serverconfig() {
 
 cmd_server_start() {
 	if [ $cloud_context = local ]; then
-		xhyve_safe_start
+		hv_safe_start
 	else
 		error Not implemented yet
 	fi
@@ -2294,7 +2358,7 @@ cmd_server_start() {
 
 cmd_server_stop() {
 	if [ $cloud_context = local ]; then
-		xhyve_safe_stop
+		hv_safe_stop
 	else
 		error Not implemented yet
 	fi
@@ -2302,19 +2366,19 @@ cmd_server_stop() {
 
 cmd_server_restart() {
 	if [ $cloud_context = local ]; then
-		xhyve_safe_restart
+		hv_safe_restart
 	else
 		error Not implemented yet
 	fi
 }
 
 cmd_server_shell() {
-	xhyve_ensure
+	hv_ensure
 	server_ssh
 }
 
 cmd_server_exec() {
-	xhyve_ensure
+	hv_ensure
 	if [ -t 0 ]; then
 		if [ $# -gt 1 ] && [ "$1" = -- ]; then
 			shift
@@ -2327,14 +2391,14 @@ cmd_server_exec() {
 
 cmd_server_expand() {
 	if [ $cloud_context = local ]; then
-		if xhyve_running; then
+		if hv_running; then
 			begin Stopping server
-			xhyve_stop
+			hv_stop
 		fi
 		begin Expanding disk
 		dd if=/dev/zero bs=1g count=20 >> $local_disk_path
 		begin Starting server
-		xhyve_start
+		hv_start
 		begin Expanding filesystem
 		server_ssh <<-SSH
 			gpart recover vtbd0
@@ -2347,7 +2411,9 @@ cmd_server_expand() {
 }
 
 cmd_server_update() {
-	xhyve_ensure
+	if [ $cloud_context = local ]; then
+		hv_ensure
+	fi
 	server_update
 }
 
@@ -2390,9 +2456,44 @@ server_download() {
 
 server_create_disk() {
 	if [ ! -f $local_disk_path ]; then
-		tar xJvf $local_disk_xz_path -C $local_run_path
+		tar xJvf $local_disk_xz_path -C $local_server_path
+		rm $local_disk_xz_path
 	else
 		echo Disk already created
+	fi
+}
+
+server_first_start() {
+	local line
+	if [ $arch = arm64 ]; then
+		hv_ensure
+	else
+		if mac_host_exists; then
+			hv_ensure
+		else
+			if hv_running; then
+				hv_stop
+			fi
+			nc -l 1234 > $local_ips_path &
+			sleep 5
+			hv_spawn
+			while [ -z "$(cat $local_ips_path )" ]; do
+				printf .
+				sleep $wait_count
+				if ! hv_running; then
+					error Hypervisor process failed check $local_log_path
+				fi
+			done
+			. $local_ips_path
+			server_ip=$server_local_ip
+			mac_add_conf $local_conf_path mac_ip
+			mac_add_conf $local_conf_path server_local_ip
+			rm $local_ips_path
+			line="$server_ip $server_domain"
+			echo
+			mac_add_line -s $hosts_path "$line"
+			server_disable_send_ips
+		fi
 	fi
 }
 
@@ -2407,6 +2508,7 @@ server_share_dirs() {
 			abs_path=$exports_data_path$rel_path
 			mac_add_line -s $exports_path "$abs_path -mapall=$(id -u)"
 		done
+		echo "nfs.server.mount.require_resv_port = 0" | sudo tee /etc/nfs.conf
 		mac_update_nfsd
 		for rel_path in $exports_paths; do
 			abs_path=$exports_data_path$rel_path
@@ -2438,6 +2540,9 @@ server_set_prefs() {
 	SSH
 	server_reset_session
 	server_ssh <<-SSH
+		if [ -f /root/.shrc ]; then
+			sed -i '' 's/PS1/# PS1/' /root/.shrc
+		fi
 		touch /root/.hushlogin
 		echo '$ps1' > /etc/profile
 	SSH
@@ -2472,19 +2577,18 @@ server_update() {
 }
 
 server_jail_init() {
-	local ext_if host
-	if [ $cloud_context = local ]; then
-		ext_if=vtnet0
-	else
-		ext_if=$server_ext_if
-	fi
+	local host
 	server_ssh <<-SSH
 		for fs in $fs_jail_path $fs_base_path $fs_skel_path $fs_data_path $fs_fstab_path $fs_repo_path $fs_shared_path; do
 			zfs create \$fs
 		done
 		zfs set mountpoint=$jail_path $fs_jail_path
 
-		for name in base lib32; do
+		names='base'
+		if [ $arch != arm64 ]; then
+			names+=' lib32'
+		fi
+		for name in \$names; do
 			fetch $freebsd_url/\$name.txz -o /tmp
 			tar -xf /tmp/\$name.txz -C $jail_base_path
 		done
@@ -2498,7 +2602,11 @@ server_jail_init() {
 			ln -s base/\$name $jail_skel_path
 		done
 		mkdir -p $jail_skel_path/usr/local
-		for name in bin include lib lib32 libdata libexec obj sbin share src tests; do
+		names='bin include lib libdata libexec obj sbin share src tests'
+		if [ $arch != arm64 ]; then
+			names+=' lib32'
+		fi
+		for name in \$names; do
 			ln -s ../base/usr/\$name $jail_skel_path/usr
 		done
 		for name in resolv.conf localtime; do
@@ -2538,8 +2646,8 @@ server_jail_init() {
 			sshd_enable="YES"
 		CONF
 
-		cat <<-CONF >> /etc/pf.conf
-			EXT_IF="$ext_if"
+		cat <<-CONF > /etc/pf.conf
+			EXT_IF="$server_ext_if"
 			JAIL_NET="$server_ip_range.0.0.0/16"
 			INGRESS_IP="$server_ip_range.0.0.2"
 
@@ -2600,48 +2708,14 @@ server_ingress_init() {
 	fi
 }
 
-server_first_start() {
-	local line
-	if mac_host_exists; then
-		xhyve_ensure
-	else
-		if xhyve_running; then
-			xhyve_stop
-		fi
-		nc -l 1234 > $local_ips_path &
-		sleep 5
-		xhyve_spawn
-		while [ -z "$(cat $local_ips_path )" ]; do
-			printf .
-			sleep $wait_count
-      if ! xhyve_running; then
-        error Xhyve process failed check $local_log_path
-      fi
-		done
-		. $local_ips_path
-		server_ip=$server_local_ip
-		mac_add_conf $local_conf_path mac_ip
-		mac_add_conf $local_conf_path server_local_ip
-		rm $local_ips_path
-		line="$server_ip $server_domain"
-		echo
-		mac_add_line -s $hosts_path "$line"
-		server_disable_send_ips
-	fi
-}
-
 server_delete_files() {
 	rm -rvf $local_tmp_path/*
-	rm -rvf $local_run_path/*
+	rm -rvf $local_server_path/*
 }
 
 server_delete_host() {
-	if mac_host_exists; then
-		echo $server_domain
-		mac_delete_line -s $hosts_path $server_domain
-	else
-		echo Not found
-	fi
+	echo $server_domain
+	mac_delete_line -s $hosts_path $server_domain
 }
 
 server_unshare_dirs() {
@@ -2692,6 +2766,10 @@ server_choose_settings() {
 
 trap 'exit' INT TERM
 trap 'kill 0' EXIT
+
+if [ $arch = arm64 ]; then
+	export PATH=$local_deps_bin_path:$local_deps_sbin_path:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/Apple/usr/bin
+fi
 
 cloud_load
 

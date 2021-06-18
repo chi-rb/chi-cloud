@@ -1,0 +1,7 @@
+#!/bin/sh
+
+cloud_path=/usr/local/cloud
+opt_path=$cloud_path/opt
+src_path=$cloud_path/src
+
+rm -rf $opt_path $src_path
