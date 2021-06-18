@@ -2577,7 +2577,6 @@ server_update() {
 }
 
 server_jail_init() {
-	local host
 	server_ssh <<-SSH
 		for fs in $fs_jail_path $fs_base_path $fs_skel_path $fs_data_path $fs_fstab_path $fs_repo_path $fs_shared_path; do
 			zfs create \$fs
