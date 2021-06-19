@@ -904,8 +904,8 @@ cloud_read_ini() {
 						;;
 						esac
 						var="${group}_${name}=\"$value\""
-						if echo $value | grep -qe '[$]'; then
-							vars+=($var)
+						if echo "$value" | grep -qe '[$]'; then
+							vars+=("$var")
 						else
 							eval export "$var"
 						fi
@@ -2151,7 +2151,7 @@ container_gen_fstab() {
 			server_ssh <<-SSH
 				if [ -d "$shared_path" ]; then
 					mkdir -p $vol_path
-					echo $(echo "$shared_path" | sed 's/ /\\\\040/g') $vol_path nullfs rw 0 0 >> $fstab_path
+					echo $(echo "$shared_path" | sed 's/ /\\\\\\\\\\040/g') $vol_path nullfs rw 0 0 >> $fstab_path
 				fi
 			SSH
 		done
@@ -2177,7 +2177,7 @@ container_gen_profile() {
 	vars=$(echo "$vars" | tr '\r' '\n' | sed '/^$/d')
 	while read var; do
 		name=$(echo "$var" | cut -d = -f 1 | upcase)
-		value=$(echo "$var" | cut -d = -f 2)
+		value=$(echo "$var" | cut -d = -f 2-)
 		server_ssh <<-SSH
 			echo export $name=\"$value\" >> $path
 		SSH
@@ -2504,16 +2504,16 @@ server_share_dirs() {
 			sudo touch $exports_path
 			chown root:wheel $exports_path
 		fi
+		echo nfs.server.mount.require_resv_port = 0 | sudo tee /etc/nfs.conf
 		for rel_path in $exports_paths; do
 			abs_path=$exports_data_path$rel_path
 			mac_add_line -s $exports_path "$abs_path -mapall=$(id -u)"
 		done
-		echo "nfs.server.mount.require_resv_port = 0" | sudo tee /etc/nfs.conf
 		mac_update_nfsd
 		for rel_path in $exports_paths; do
 			abs_path=$exports_data_path$rel_path
 			server_ssh <<-SSH
-				echo '$mac_ip:$abs_path	$rel_path	nfs	rw	0	0' >> /etc/fstab
+				echo '$mac_ip:$abs_path	$rel_path nfs rw,nolockd 0 0' >> /etc/fstab
 				mkdir -p $rel_path
 				mount $rel_path
 			SSH
