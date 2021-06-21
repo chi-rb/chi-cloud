@@ -840,10 +840,8 @@ cloud_get_bin_names() {
 
 cloud_add_bins() {
 	local path bin_name
-	if [ ! -d $bin_path ]; then
-		sudo mkdir -p $bin_path
-		sudo chown $USER:admin $bin_path
-	fi
+	sudo mkdir -p $bin_path
+	sudo chown $USER:admin $bin_path
 	for bin_name in $(cloud_get_bin_names); do
 		if [ bin_name = xhyve ] && [ $arch = arm64 ]; then
 			continue
@@ -2151,7 +2149,8 @@ container_gen_fstab() {
 			server_ssh <<-SSH
 				if [ -d "$shared_path" ]; then
 					mkdir -p $vol_path
-					echo $(echo "$shared_path" | sed 's/ /\\\\\\\\\\040/g') $vol_path nullfs rw 0 0 >> $fstab_path
+					printf "$shared_path" | sed 's/ /\\\\\\\\\\\040/g' >> $fstab_path
+					echo " $vol_path nullfs rw 0 0" >> $fstab_path
 				fi
 			SSH
 		done
