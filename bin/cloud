@@ -2158,7 +2158,7 @@ container_gen_fstab() {
 				if [ -d "$shared_path" ]; then
 					mkdir -p $vol_path
 					printf "$shared_path" | sed 's/ /\\\\\\\\\\\040/g' >> $fstab_path
-					echo " $vol_path nullfs rw 0 0" >> $fstab_path
+					echo " $vol_path nullfs rw,nolockd 0 0" >> $fstab_path
 				fi
 			SSH
 		done
