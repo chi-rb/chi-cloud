@@ -86,7 +86,6 @@ ingress_hosts_path=$ingress_nginx_path/hosts
 ingress_vols='ssl:/ssl nginx:/usr/local/etc/nginx'
 
 server_local_user=root
-server_local_ip_range=11
 server_local_ext_if=vtnet0
 server_local_domain=$name.local
 server_local_mem=4G
@@ -94,8 +93,11 @@ server_local_cpus=4
 server_local_id=8299FDAA-4CC0-4FF2-AE5B-A1E1DEC574D7
 
 if [ $arch = arm64 ]; then
+	server_local_ip_range=11
 	server_local_ip=127.0.0.1
 	mac_ip=10.0.2.2
+else
+	server_local_ip_range=10
 fi
 
 user_setting_names=(
@@ -1188,11 +1190,11 @@ cmd_tunnel_start() {
 	local long_name
 	short_name=$1
 	long_name=$(container_expand_name $short_name)
+	echo "$server_domain:$2 => $short_name:$2"
 	server_ssh <<-SSH
 		echo "rdr on $server_ext_if proto tcp from any to ($server_ext_if) port $2 -> $long_name port $2" |
 		pfctl -a tunnels -f -
 	SSH
-	echo "$server_domain:$2 => $short_name:$2"
 }
 
 cmd_tunnel_stop() {
