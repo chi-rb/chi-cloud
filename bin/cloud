@@ -95,8 +95,10 @@ server_local_id=8299FDAA-4CC0-4FF2-AE5B-A1E1DEC574D7
 if [ $arch = arm64 ]; then
 	server_local_ip_range=11
 	server_local_ip=127.0.0.1
+	server_local_ssh_port=2200
 	mac_ip=10.0.2.2
 else
+	server_local_ssh_port=22
 	server_local_ip_range=10
 fi
 
@@ -182,27 +184,21 @@ fast_ssh_opts() {
 }
 
 fast_ssh() {
-	local user host opts
+	local user host
 	user=$1
 	host=$2
 	shift 2
-	opts=$(fast_ssh_opts)
-	if [ $arch = arm64 ]; then
-		opts+=' -p 2200'
-	fi
-	ssh -tq \
-	$opts \
+	ssh \
+	$(fast_ssh_opts) \
+	-p $server_ssh_port	\
+	-tq \
 	$user@$host $@
 }
 
 fast_scp() {
-	local opts
-	opts=$(fast_ssh_opts)
-	if [ $arch = arm64 ]; then
-		opts+=' -P 2200'
-	fi
 	scp \
-	$opts \
+	$(fast_ssh_opts) \
+	-P $server_ssh_port \
 	-C \
 	$@
 }
@@ -794,6 +790,7 @@ cloud_config() {
 	cloud_read_ini $local_conf_path
 	if [ $cloud_context = local ]; then
 		server_user=$server_local_user
+		server_ssh_port=$server_local_ssh_port
 		server_ip_range=$server_local_ip_range
 		server_ext_if=$server_local_ext_if
 		server_domain=$server_local_domain
@@ -1187,20 +1184,17 @@ volume_delete_one() {
 # TUNNEL
 
 cmd_tunnel_start() {
-	local long_name
+	local short_name long_name
 	short_name=$1
 	long_name=$(container_expand_name $short_name)
-	echo "$server_domain:$2 => $short_name:$2"
-	server_ssh <<-SSH
-		echo "rdr on $server_ext_if proto tcp from any to ($server_ext_if) port $2 -> $long_name port $2" |
-		pfctl -a tunnels -f -
-	SSH
-}
-
-cmd_tunnel_stop() {
-	server_ssh <<-SSH
-		pfctl -a tunnels -F all >/dev/null 2>&1
-	SSH
+	echo "localhost:$2 => $short_name:$2"
+	ssh \
+	-o UserKnownHostsFile=/dev/null \
+	-o StrictHostKeyChecking=no \
+	-p$server_ssh_port \
+	-NL \
+	$2:$long_name:$2 \
+	$server_user@$server_ip
 }
 
 cmd_tunnel_help() {
@@ -1210,7 +1204,6 @@ cmd_tunnel_help() {
 
 		Available commands:
 			start         Starts tunnel
-			stop          Stops tunnel
 			help          Prints documentation
 	DOC
 }
@@ -2878,9 +2871,6 @@ branch|volume|tunnel|ingress|image|context|container|server)
 		;;
 		tunnel)
 			case $cmd in
-			stop)
-				cmd_tunnel_stop
-			;;
 			start)
 				cmd_tunnel_start $@
 			;;
